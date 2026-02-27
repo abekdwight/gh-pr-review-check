@@ -28,7 +28,7 @@ const program = new Command();
 program
   .name('gh-pr-review-check')
   .description('Sync PR review data for AI-assisted review handling')
-  .version('0.0.2');
+  .version('0.0.3');
 
 // Default command: sync
 program
