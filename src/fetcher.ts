@@ -46,6 +46,11 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
                   body
                   author { login }
                   createdAt
+                  reactions(first: 20) {
+                    nodes {
+                      content
+                    }
+                  }
                 }
               }
             }
@@ -83,11 +88,46 @@ export function fetchReviews(config: SyncConfig): Review[] {
 }
 
 export function fetchIssueComments(config: SyncConfig): IssueComment[] {
-  const json = runGh(
-    `pr view ${config.prNumber} --repo ${config.owner}/${config.repo} --json comments`
-  );
-  const data = JSON.parse(json);
-  return data.comments || [];
+  const query = `
+    query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          comments(first: 100) {
+            nodes {
+              id
+              body
+              author { login }
+              createdAt
+              reactions(first: 20) {
+                nodes {
+                  content
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const result = runGhApiGraphQL(query, {
+    owner: config.owner,
+    repo: config.repo,
+    number: config.prNumber,
+  });
+
+  const data = JSON.parse(result);
+  const rawComments = data.data.repository.pullRequest.comments.nodes;
+
+  // Transform to match IssueComment interface
+  return rawComments.map((c: { id: string; body: string; author: { login: string } | null; createdAt: string; reactions?: { nodes: Array<{ content: string }> } }) => ({
+    id: c.id,
+    node_id: c.id, // Use id as node_id for consistency
+    author: c.author,
+    body: c.body,
+    createdAt: c.createdAt,
+    reactions: c.reactions,
+  }));
 }
 
 export function fetchReviewComments(config: SyncConfig): ReviewComment[] {

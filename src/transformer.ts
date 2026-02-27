@@ -5,7 +5,33 @@ import type {
   ReviewEntry,
   IssueCommentEntry,
   ReviewComment,
+  ActionStatus,
 } from './types.js';
+
+// Reaction content to action mapping (case-insensitive)
+const REACTION_TO_ACTION: Record<string, ActionStatus> = {
+  '+1': 'done',
+  '-1': 'skip',
+  'eyes': 'in_progress',
+  'hooray': 'done',
+  'rocket': 'in_progress',
+};
+
+/**
+ * Determine action from reactions
+ */
+function getActionFromReactions(reactions?: { nodes: Array<{ content: string }> }): ActionStatus | null {
+  if (!reactions?.nodes?.length) return null;
+
+  // Check for known reactions (case-insensitive)
+  for (const reaction of reactions.nodes) {
+    const content = reaction.content.toLowerCase();
+    const action = REACTION_TO_ACTION[content];
+    if (action) return action;
+  }
+
+  return null;
+}
 
 /**
  * Build a map from review comment ID to thread ID
@@ -42,6 +68,19 @@ export function transform(data: FetchedData): OutputEntry[] {
 
   // 1. Review Threads (primary source for inline comments)
   for (const thread of data.threads) {
+    // Determine action: isResolved takes priority, then check reactions
+    let action: ActionStatus = 'pending';
+    if (thread.isResolved) {
+      action = 'done';
+    } else if (thread.comments.length > 0) {
+      // Check first comment's reactions
+      const firstComment = thread.comments[0];
+      const reactionAction = getActionFromReactions(firstComment.reactions);
+      if (reactionAction) {
+        action = reactionAction;
+      }
+    }
+
     const entry: ThreadEntry = {
       id: thread.id,
       type: 'thread',
@@ -49,7 +88,7 @@ export function transform(data: FetchedData): OutputEntry[] {
       path: thread.path,
       line: thread.line,
       is_resolved: thread.isResolved,
-      action: thread.isResolved ? 'done' : 'pending',
+      action,
       comments: thread.comments.map((c) => ({
         id: c.id,
         author: c.author?.login || null,
@@ -94,12 +133,19 @@ export function transform(data: FetchedData): OutputEntry[] {
 
   // 3. Issue Comments (PR-level comments)
   for (const comment of data.issueComments) {
+    // Determine action from reactions
+    let action: ActionStatus = 'pending';
+    const reactionAction = getActionFromReactions(comment.reactions);
+    if (reactionAction) {
+      action = reactionAction;
+    }
+
     const entry: IssueCommentEntry = {
       id: comment.node_id,
       type: 'issue_comment',
       author: comment.author?.login || null,
       body: comment.body,
-      action: 'pending',
+      action,
     };
     entries.push(entry);
   }

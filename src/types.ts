@@ -13,6 +13,7 @@ export interface ReviewThreadComment {
   body: string;
   author: { login: string } | null;
   createdAt: string;
+  reactions?: { nodes: Array<{ content: string }> };
 }
 
 export interface Review {
@@ -30,6 +31,7 @@ export interface IssueComment {
   author: { login: string } | null;
   body: string;
   createdAt: string;
+  reactions?: { nodes: Array<{ content: string }> };
 }
 
 export interface ReviewComment {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { program } from 'commander';
+import { Command } from 'commander';
 import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -8,6 +8,7 @@ import { parsePRUrl } from './utils.js';
 import { fetchAll } from './fetcher.js';
 import { transform, toJsonl } from './transformer.js';
 import { computeStats, formatSummary } from './stats.js';
+import { resolve, Status } from './resolve.js';
 
 function detectRepo(): { owner: string; repo: string } | null {
   try {
@@ -22,10 +23,15 @@ function detectRepo(): { owner: string; repo: string } | null {
   }
 }
 
+const program = new Command();
+
 program
   .name('gh-pr-review-check')
   .description('Sync PR review data for AI-assisted review handling')
-  .version('0.0.2')
+  .version('0.0.2');
+
+// Default command: sync
+program
   .argument('[pr]', 'PR number or URL (defaults to current branch)')
   .option('-o, --output <dir>', 'Output directory', '/tmp/github.com')
   .option('-R, --repo <repo>', 'Repository in OWNER/REPO format (auto-detected from cwd)')
@@ -33,7 +39,7 @@ program
   .option('-q, --quiet', 'Suppress progress messages')
   .action(async (pr: string | undefined, options: { output: string; repo?: string; json?: boolean; quiet?: boolean }) => {
     try {
-      await main(pr, options);
+      await syncCommand(pr, options);
     } catch (error) {
       const err = error as Error;
       console.error(`Error: ${err.message}`);
@@ -41,7 +47,51 @@ program
     }
   });
 
-async function main(
+// Resolve command
+program
+  .command('resolve <entry-id>')
+  .description('Mark an entry as done, skip, or in_progress by adding a reaction')
+  .requiredOption('-s, --status <status>', 'Status to set (done, skip, in_progress)')
+  .option('-c, --comment <text>', 'Add a comment with the status change')
+  .option('-R, --repo <repo>', 'Repository in OWNER/REPO format (auto-detected from cwd)')
+  .action((entryId: string, options: { status: string; comment?: string; repo?: string }) => {
+    try {
+      const status = options.status as Status;
+      if (!['done', 'skip', 'in_progress'].includes(status)) {
+        throw new Error(`Invalid status: ${status}. Must be one of: done, skip, in_progress`);
+      }
+
+      let owner: string;
+      let repo: string;
+
+      if (options.repo) {
+        const [o, r] = options.repo.split('/');
+        owner = o;
+        repo = r;
+      } else {
+        const detected = detectRepo();
+        if (!detected) {
+          throw new Error('--repo is required when no git repo detected');
+        }
+        owner = detected.owner;
+        repo = detected.repo;
+      }
+
+      resolve({
+        owner,
+        repo,
+        entryId,
+        status,
+        comment: options.comment,
+      });
+    } catch (error) {
+      const err = error as Error;
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+async function syncCommand(
   pr: string | undefined,
   options: { output: string; repo?: string; json?: boolean; quiet?: boolean }
 ): Promise<void> {
