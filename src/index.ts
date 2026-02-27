@@ -25,7 +25,7 @@ function detectRepo(): { owner: string; repo: string } | null {
 program
   .name('gh-pr-review-check')
   .description('Sync PR review data for AI-assisted review handling')
-  .version('1.0.0')
+  .version('0.0.2')
   .argument('[pr]', 'PR number or URL (defaults to current branch)')
   .option('-o, --output <dir>', 'Output directory', '/tmp/github.com')
   .option('-R, --repo <repo>', 'Repository in OWNER/REPO format (auto-detected from cwd)')
