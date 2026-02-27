@@ -3470,7 +3470,7 @@ var {
 } = import_index.default;
 
 // ../ghq/github.com/abekdwight/gh-pr-review-check/src/index.ts
-var import_node_child_process2 = require("node:child_process");
+var import_node_child_process3 = require("node:child_process");
 var fs = __toESM(require("node:fs"), 1);
 var path = __toESM(require("node:path"), 1);
 
@@ -3531,6 +3531,11 @@ function fetchReviewThreads(config) {
                   body
                   author { login }
                   createdAt
+                  reactions(first: 20) {
+                    nodes {
+                      content
+                    }
+                  }
                 }
               }
             }
@@ -3562,11 +3567,43 @@ function fetchReviews(config) {
   return data.reviews || [];
 }
 function fetchIssueComments(config) {
-  const json = runGh(
-    `pr view ${config.prNumber} --repo ${config.owner}/${config.repo} --json comments`
-  );
-  const data = JSON.parse(json);
-  return data.comments || [];
+  const query = `
+    query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          comments(first: 100) {
+            nodes {
+              id
+              body
+              author { login }
+              createdAt
+              reactions(first: 20) {
+                nodes {
+                  content
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const result = runGhApiGraphQL(query, {
+    owner: config.owner,
+    repo: config.repo,
+    number: config.prNumber
+  });
+  const data = JSON.parse(result);
+  const rawComments = data.data.repository.pullRequest.comments.nodes;
+  return rawComments.map((c) => ({
+    id: c.id,
+    node_id: c.id,
+    // Use id as node_id for consistency
+    author: c.author,
+    body: c.body,
+    createdAt: c.createdAt,
+    reactions: c.reactions
+  }));
 }
 function fetchReviewComments(config) {
   const json = runGh(
@@ -3591,6 +3628,22 @@ function fetchAll(config, quiet = false) {
 }
 
 // ../ghq/github.com/abekdwight/gh-pr-review-check/src/transformer.ts
+var REACTION_TO_ACTION = {
+  "+1": "done",
+  "-1": "skip",
+  "eyes": "in_progress",
+  "hooray": "done",
+  "rocket": "in_progress"
+};
+function getActionFromReactions(reactions) {
+  if (!reactions?.nodes?.length) return null;
+  for (const reaction of reactions.nodes) {
+    const content = reaction.content.toLowerCase();
+    const action = REACTION_TO_ACTION[content];
+    if (action) return action;
+  }
+  return null;
+}
 function buildCommentToThreadMap(threads) {
   const map = /* @__PURE__ */ new Map();
   for (const thread of threads) {
@@ -3608,6 +3661,16 @@ function transform(data) {
   const entries = [];
   const commentToThread = buildCommentToThreadMap(data.threads);
   for (const thread of data.threads) {
+    let action = "pending";
+    if (thread.isResolved) {
+      action = "done";
+    } else if (thread.comments.length > 0) {
+      const firstComment = thread.comments[0];
+      const reactionAction = getActionFromReactions(firstComment.reactions);
+      if (reactionAction) {
+        action = reactionAction;
+      }
+    }
     const entry = {
       id: thread.id,
       type: "thread",
@@ -3616,7 +3679,7 @@ function transform(data) {
       path: thread.path,
       line: thread.line,
       is_resolved: thread.isResolved,
-      action: thread.isResolved ? "done" : "pending",
+      action,
       comments: thread.comments.map((c) => ({
         id: c.id,
         author: c.author?.login || null,
@@ -3649,12 +3712,17 @@ function transform(data) {
     entries.push(entry);
   }
   for (const comment of data.issueComments) {
+    let action = "pending";
+    const reactionAction = getActionFromReactions(comment.reactions);
+    if (reactionAction) {
+      action = reactionAction;
+    }
     const entry = {
       id: comment.node_id,
       type: "issue_comment",
       author: comment.author?.login || null,
       body: comment.body,
-      action: "pending"
+      action
     };
     entries.push(entry);
   }
@@ -3730,10 +3798,157 @@ function formatSummary(stats) {
   return lines.join("\n");
 }
 
+// ../ghq/github.com/abekdwight/gh-pr-review-check/src/resolve.ts
+var import_node_child_process2 = require("node:child_process");
+var STATUS_REACTIONS = {
+  done: "+1",
+  skip: "-1",
+  in_progress: "eyes"
+};
+function runGh2(args) {
+  try {
+    return (0, import_node_child_process2.execSync)(`gh ${args}`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+  } catch (error) {
+    const err = error;
+    throw new Error(`gh command failed: ${err.stderr || err.message}`);
+  }
+}
+function detectEntryType(entryId) {
+  if (entryId.startsWith("PRRT_")) return "thread";
+  if (entryId.startsWith("PRR_")) return "review";
+  if (!entryId.startsWith("PRR")) return "issue_comment";
+  return "unknown";
+}
+function addReactionToIssueComment(owner, repo, commentNodeId, reaction) {
+  const query = `
+    query($owner: String!, $repo: String!, $nodeId: ID!) {
+      node(id: $nodeId) {
+        ... on IssueComment {
+          id
+          databaseId
+        }
+      }
+    }
+  `;
+  const result = runGh2(`api graphql -f query='${query}' -f owner=${owner} -f repo=${repo} -f nodeId=${commentNodeId}`);
+  const data = JSON.parse(result);
+  const databaseId = data.data?.node?.databaseId;
+  if (!databaseId) {
+    throw new Error(`Could not find issue comment with node_id: ${commentNodeId}`);
+  }
+  runGh2(`api --method POST repos/${owner}/${repo}/issues/comments/${databaseId}/reactions -f content=${reaction}`);
+}
+function addReactionToThread(owner, repo, threadId, reaction) {
+  const query = `
+    query($threadId: ID!) {
+      node(id: $threadId) {
+        ... on PullRequestReviewThread {
+          comments(first: 1) {
+            nodes {
+              databaseId
+            }
+          }
+        }
+      }
+    }
+  `;
+  const result = runGh2(`api graphql -f query='${query}' -f threadId=${threadId}`);
+  const data = JSON.parse(result);
+  const firstComment = data.data?.node?.comments?.nodes?.[0];
+  if (!firstComment || !firstComment.databaseId) {
+    throw new Error(`Could not find comments in thread: ${threadId}`);
+  }
+  const databaseId = firstComment.databaseId;
+  runGh2(`api --method POST repos/${owner}/${repo}/pulls/comments/${databaseId}/reactions -f content=${reaction}`);
+}
+function replyToThread(owner, repo, threadId, body) {
+  const query = `
+    query($owner: String!, $repo: String!, $threadId: ID!) {
+      node(id: $threadId) {
+        ... on PullRequestReviewThread {
+          pullRequest {
+            number
+          }
+          comments(first: 1) {
+            nodes {
+              id
+              pullRequestReview {
+                id
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const result = runGh2(`api graphql -f query='${query}' -f owner=${owner} -f repo=${repo} -f threadId=${threadId}`);
+  const data = JSON.parse(result);
+  const thread = data.data?.node;
+  if (!thread?.pullRequest) {
+    throw new Error(`Could not find pull request for thread: ${threadId}`);
+  }
+  const prNumber = thread.pullRequest.number;
+  const reviewId = thread.comments?.nodes?.[0]?.pullRequestReview?.id;
+  const replyMutation = `
+    mutation($threadId: ID!, $body: String!) {
+      addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+        comment {
+          id
+        }
+      }
+    }
+  `;
+  runGh2(`api graphql -f query='${replyMutation}' -f threadId=${threadId} -f body="${body.replace(/"/g, '\\"')}"`);
+}
+function replyToIssueComment(owner, repo, commentNodeId, body) {
+  const query = `
+    query($nodeId: ID!) {
+      node(id: $nodeId) {
+        ... on IssueComment {
+          issue {
+            number
+          }
+        }
+      }
+    }
+  `;
+  const result = runGh2(`api graphql -f query='${query}' -f nodeId=${commentNodeId}`);
+  const data = JSON.parse(result);
+  const issueNumber = data.data?.node?.issue?.number;
+  if (!issueNumber) {
+    throw new Error(`Could not find issue for comment: ${commentNodeId}`);
+  }
+  runGh2(`pr comment ${issueNumber} --repo ${owner}/${repo} --body "${body.replace(/"/g, '\\"')}"`);
+}
+function resolve(options) {
+  const { owner, repo, entryId, status, comment } = options;
+  const reaction = STATUS_REACTIONS[status];
+  const entryType = detectEntryType(entryId);
+  console.error(`Resolving ${entryType} ${entryId} as ${status}...`);
+  if (entryType === "thread") {
+    addReactionToThread(owner, repo, entryId, reaction);
+  } else if (entryType === "issue_comment") {
+    addReactionToIssueComment(owner, repo, entryId, reaction);
+  } else {
+    throw new Error(`Reviews cannot be resolved directly (entry: ${entryId})`);
+  }
+  console.error(`Added reaction: ${reaction}`);
+  if (comment) {
+    console.error(`Adding comment...`);
+    if (entryType === "thread") {
+      replyToThread(owner, repo, entryId, comment);
+    } else if (entryType === "issue_comment") {
+      replyToIssueComment(owner, repo, entryId, comment);
+    }
+    console.error(`Comment added`);
+  }
+  console.error(`Done`);
+}
+
 // ../ghq/github.com/abekdwight/gh-pr-review-check/src/index.ts
 function detectRepo() {
   try {
-    const result = (0, import_node_child_process2.execSync)('gh repo view --json owner,name -q ".owner.login+\\"/\\"+.name"', {
+    const result = (0, import_node_child_process3.execSync)('gh repo view --json owner,name -q ".owner.login+\\"/\\"+.name"', {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"]
     }).trim();
@@ -3743,16 +3958,51 @@ function detectRepo() {
     return null;
   }
 }
-program.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.2").argument("[pr]", "PR number or URL (defaults to current branch)").option("-o, --output <dir>", "Output directory", "/tmp/github.com").option("-R, --repo <repo>", "Repository in OWNER/REPO format (auto-detected from cwd)").option("-j, --json", "Output as JSON (only the output directory path)").option("-q, --quiet", "Suppress progress messages").action(async (pr, options) => {
+var program2 = new Command();
+program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.2");
+program2.argument("[pr]", "PR number or URL (defaults to current branch)").option("-o, --output <dir>", "Output directory", "/tmp/github.com").option("-R, --repo <repo>", "Repository in OWNER/REPO format (auto-detected from cwd)").option("-j, --json", "Output as JSON (only the output directory path)").option("-q, --quiet", "Suppress progress messages").action(async (pr, options) => {
   try {
-    await main(pr, options);
+    await syncCommand(pr, options);
   } catch (error) {
     const err = error;
     console.error(`Error: ${err.message}`);
     process.exit(1);
   }
 });
-async function main(pr, options) {
+program2.command("resolve <entry-id>").description("Mark an entry as done, skip, or in_progress by adding a reaction").requiredOption("-s, --status <status>", "Status to set (done, skip, in_progress)").option("-c, --comment <text>", "Add a comment with the status change").option("-R, --repo <repo>", "Repository in OWNER/REPO format (auto-detected from cwd)").action((entryId, options) => {
+  try {
+    const status = options.status;
+    if (!["done", "skip", "in_progress"].includes(status)) {
+      throw new Error(`Invalid status: ${status}. Must be one of: done, skip, in_progress`);
+    }
+    let owner;
+    let repo;
+    if (options.repo) {
+      const [o, r] = options.repo.split("/");
+      owner = o;
+      repo = r;
+    } else {
+      const detected = detectRepo();
+      if (!detected) {
+        throw new Error("--repo is required when no git repo detected");
+      }
+      owner = detected.owner;
+      repo = detected.repo;
+    }
+    resolve({
+      owner,
+      repo,
+      entryId,
+      status,
+      comment: options.comment
+    });
+  } catch (error) {
+    const err = error;
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+});
+async function syncCommand(pr, options) {
   const log = options.quiet ? () => {
   } : console.error;
   let owner;
@@ -3789,7 +4039,7 @@ async function main(pr, options) {
       prNumber = parseInt(pr, 10);
     }
   } else {
-    const prUrl = (0, import_node_child_process2.execSync)("gh pr view --json url -q .url", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    const prUrl = (0, import_node_child_process3.execSync)("gh pr view --json url -q .url", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
     const parsed = parsePRUrl(prUrl);
     owner = parsed.owner;
     repo = parsed.repo;
@@ -3836,4 +4086,4 @@ async function main(pr, options) {
     console.log(outputDir);
   }
 }
-program.parse();
+program2.parse();
