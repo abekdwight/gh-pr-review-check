@@ -42,9 +42,8 @@ export function detectEntryType(entryId: string): 'thread' | 'issue_comment' | '
  */
 function addReactionToIssueComment(owner: string, repo: string, commentNodeId: string, reaction: string): void {
   // First, get the numeric comment ID from node_id
-  // We need to query GitHub API to get the comment details
   const query = `
-    query($owner: String!, $repo: String!, $nodeId: ID!) {
+    query($nodeId: ID!) {
       node(id: $nodeId) {
         ... on IssueComment {
           id
@@ -54,7 +53,7 @@ function addReactionToIssueComment(owner: string, repo: string, commentNodeId: s
     }
   `;
 
-  const result = runGh(`api graphql -f query='${query}' -f owner=${owner} -f repo=${repo} -f nodeId=${commentNodeId}`);
+  const result = runGh(`api graphql -f query='${query}' -f nodeId=${commentNodeId}`);
   const data = JSON.parse(result);
   const databaseId = data.data?.node?.databaseId;
 
@@ -103,41 +102,7 @@ function addReactionToThread(owner: string, repo: string, threadId: string, reac
  * Reply to a review thread
  */
 function replyToThread(owner: string, repo: string, threadId: string, body: string): void {
-  // Get thread's pull request and reply
-  const query = `
-    query($owner: String!, $repo: String!, $threadId: ID!) {
-      node(id: $threadId) {
-        ... on PullRequestReviewThread {
-          pullRequest {
-            number
-          }
-          comments(first: 1) {
-            nodes {
-              id
-              pullRequestReview {
-                id
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const result = runGh(`api graphql -f query='${query}' -f owner=${owner} -f repo=${repo} -f threadId=${threadId}`);
-  const data = JSON.parse(result);
-  const thread = data.data?.node;
-
-  if (!thread?.pullRequest) {
-    throw new Error(`Could not find pull request for thread: ${threadId}`);
-  }
-
-  const prNumber = thread.pullRequest.number;
-  const reviewId = thread.comments?.nodes?.[0]?.pullRequestReview?.id;
-
-  // Use gh pr comment to reply to the thread
-  // We need to find the correct way to reply to a specific thread
-  // For now, use the REST API to create a review comment as a reply
+  // Reply to thread using mutation
   const replyMutation = `
     mutation($threadId: ID!, $body: String!) {
       addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {

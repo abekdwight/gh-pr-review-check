@@ -88,45 +88,24 @@ export function fetchReviews(config: SyncConfig): Review[] {
 }
 
 export function fetchIssueComments(config: SyncConfig): IssueComment[] {
-  const query = `
-    query($owner: String!, $repo: String!, $number: Int!) {
-      repository(owner: $owner, name: $repo) {
-        pullRequest(number: $number) {
-          comments(first: 100) {
-            nodes {
-              id
-              body
-              author { login }
-              createdAt
-              reactions(first: 20) {
-                nodes {
-                  content
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
+  // Use REST API instead of GraphQL to avoid shell encoding issues
+  const json = runGh(`api repos/${config.owner}/${config.repo}/issues/${config.prNumber}/comments`);
+  const comments = JSON.parse(json);
 
-  const result = runGhApiGraphQL(query, {
-    owner: config.owner,
-    repo: config.repo,
-    number: config.prNumber,
-  });
-
-  const data = JSON.parse(result);
-  const rawComments = data.data.repository.pullRequest.comments.nodes;
-
-  // Transform to match IssueComment interface
-  return rawComments.map((c: { id: string; body: string; author: { login: string } | null; createdAt: string; reactions?: { nodes: Array<{ content: string }> } }) => ({
-    id: c.id,
-    node_id: c.id, // Use id as node_id for consistency
-    author: c.author,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return comments.map((c: any) => ({
+    id: c.node_id,
+    node_id: c.node_id,
+    author: c.user ? { login: c.user.login } : null,
     body: c.body,
-    createdAt: c.createdAt,
-    reactions: c.reactions,
+    createdAt: c.created_at,
+    reactions: {
+      nodes: [
+        ...((c.reactions['+1'] || 0) > 0 ? [{ content: '+1' }] : []),
+        ...((c.reactions['-1'] || 0) > 0 ? [{ content: '-1' }] : []),
+        ...((c.reactions.eyes || 0) > 0 ? [{ content: 'eyes' }] : []),
+      ]
+    },
   }));
 }
 

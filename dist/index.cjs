@@ -3567,42 +3567,21 @@ function fetchReviews(config) {
   return data.reviews || [];
 }
 function fetchIssueComments(config) {
-  const query = `
-    query($owner: String!, $repo: String!, $number: Int!) {
-      repository(owner: $owner, name: $repo) {
-        pullRequest(number: $number) {
-          comments(first: 100) {
-            nodes {
-              id
-              body
-              author { login }
-              createdAt
-              reactions(first: 20) {
-                nodes {
-                  content
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-  const result = runGhApiGraphQL(query, {
-    owner: config.owner,
-    repo: config.repo,
-    number: config.prNumber
-  });
-  const data = JSON.parse(result);
-  const rawComments = data.data.repository.pullRequest.comments.nodes;
-  return rawComments.map((c) => ({
-    id: c.id,
-    node_id: c.id,
-    // Use id as node_id for consistency
-    author: c.author,
+  const json = runGh(`api repos/${config.owner}/${config.repo}/issues/${config.prNumber}/comments`);
+  const comments = JSON.parse(json);
+  return comments.map((c) => ({
+    id: c.node_id,
+    node_id: c.node_id,
+    author: c.user ? { login: c.user.login } : null,
     body: c.body,
-    createdAt: c.createdAt,
-    reactions: c.reactions
+    createdAt: c.created_at,
+    reactions: {
+      nodes: [
+        ...(c.reactions["+1"] || 0) > 0 ? [{ content: "+1" }] : [],
+        ...(c.reactions["-1"] || 0) > 0 ? [{ content: "-1" }] : [],
+        ...(c.reactions.eyes || 0) > 0 ? [{ content: "eyes" }] : []
+      ]
+    }
   }));
 }
 function fetchReviewComments(config) {
@@ -3821,7 +3800,7 @@ function detectEntryType(entryId) {
 }
 function addReactionToIssueComment(owner, repo, commentNodeId, reaction) {
   const query = `
-    query($owner: String!, $repo: String!, $nodeId: ID!) {
+    query($nodeId: ID!) {
       node(id: $nodeId) {
         ... on IssueComment {
           id
@@ -3830,7 +3809,7 @@ function addReactionToIssueComment(owner, repo, commentNodeId, reaction) {
       }
     }
   `;
-  const result = runGh2(`api graphql -f query='${query}' -f owner=${owner} -f repo=${repo} -f nodeId=${commentNodeId}`);
+  const result = runGh2(`api graphql -f query='${query}' -f nodeId=${commentNodeId}`);
   const data = JSON.parse(result);
   const databaseId = data.data?.node?.databaseId;
   if (!databaseId) {
@@ -3862,33 +3841,6 @@ function addReactionToThread(owner, repo, threadId, reaction) {
   runGh2(`api --method POST repos/${owner}/${repo}/pulls/comments/${databaseId}/reactions -f content=${reaction}`);
 }
 function replyToThread(owner, repo, threadId, body) {
-  const query = `
-    query($owner: String!, $repo: String!, $threadId: ID!) {
-      node(id: $threadId) {
-        ... on PullRequestReviewThread {
-          pullRequest {
-            number
-          }
-          comments(first: 1) {
-            nodes {
-              id
-              pullRequestReview {
-                id
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-  const result = runGh2(`api graphql -f query='${query}' -f owner=${owner} -f repo=${repo} -f threadId=${threadId}`);
-  const data = JSON.parse(result);
-  const thread = data.data?.node;
-  if (!thread?.pullRequest) {
-    throw new Error(`Could not find pull request for thread: ${threadId}`);
-  }
-  const prNumber = thread.pullRequest.number;
-  const reviewId = thread.comments?.nodes?.[0]?.pullRequestReview?.id;
   const replyMutation = `
     mutation($threadId: ID!, $body: String!) {
       addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
