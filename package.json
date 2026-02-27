@@ -1,6 +1,6 @@
 {
   "name": "gh-pr-review-check",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "GitHub CLI extension to sync PR review data for AI-assisted review handling",
   "type": "module",
   "main": "dist/index.js",

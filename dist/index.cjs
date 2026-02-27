@@ -3911,7 +3911,7 @@ function detectRepo() {
   }
 }
 var program2 = new Command();
-program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.3");
+program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.4");
 program2.argument("[pr]", "PR number or URL (defaults to current branch)").option("-o, --output <dir>", "Output directory", "/tmp/github.com").option("-R, --repo <repo>", "Repository in OWNER/REPO format (auto-detected from cwd)").option("-j, --json", "Output as JSON (only the output directory path)").option("-q, --quiet", "Suppress progress messages").action(async (pr, options) => {
   try {
     await syncCommand(pr, options);
