@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { parsePRUrl } from './utils.js';
 import { fetchAll } from './fetcher.js';
 import { transform, toJsonl } from './transformer.js';
+import { computeStats, formatSummary } from './stats.js';
 
 function detectRepo(): { owner: string; repo: string } | null {
   try {
@@ -113,19 +114,12 @@ async function main(
   fs.writeFileSync(reviewsPath, toJsonl(entries));
   log(`Wrote ${reviewsPath} (${entries.length} entries)`);
 
-  // Summary
-  const threadCount = entries.filter((e) => e.type === 'thread').length;
-  const reviewCount = entries.filter((e) => e.type === 'review').length;
-  const commentCount = entries.filter((e) => e.type === 'issue_comment').length;
-  const pendingCount = entries.filter((e) => e.action === 'pending').length;
+  // Compute and display stats
+  const stats = computeStats(data, entries);
 
   if (!options.quiet) {
     log('');
-    log('Summary:');
-    log(`  Threads: ${threadCount}`);
-    log(`  Reviews: ${reviewCount}`);
-    log(`  Issue Comments: ${commentCount}`);
-    log(`  Pending: ${pendingCount}`);
+    log(formatSummary(stats));
     log('');
   }
 
@@ -136,11 +130,19 @@ async function main(
       prNumber,
       owner,
       repo,
-      entries: entries.length,
-      threads: threadCount,
-      reviews: reviewCount,
-      issueComments: commentCount,
-      pending: pendingCount
+      conversation: stats.conversation,
+      issueComments: stats.issueComments,
+      reviewsRaw: stats.reviewsRaw,
+      reviewThreads: stats.reviewThreads,
+      threadsResolved: stats.threadsResolved,
+      threadsUnresolved: stats.threadsUnresolved,
+      reviewsFiltered: stats.reviewsFiltered,
+      reviewComments: stats.reviewComments,
+      threadRoots: stats.threadRoots,
+      threadReplies: stats.threadReplies,
+      totalEntries: stats.totalEntries,
+      pendingEntries: stats.pendingEntries,
+      warnings: stats.warnings,
     }));
   } else {
     console.log(outputDir);

@@ -3664,6 +3664,72 @@ function toJsonl(entries) {
   return entries.map((e) => JSON.stringify(e)).join("\n");
 }
 
+// ../ghq/github.com/abekdwight/gh-pr-review-check/src/stats.ts
+function computeStats(data, entries) {
+  const warnings = [];
+  const issueComments = data.issueComments.length;
+  const reviewsRaw = data.reviews.length;
+  const reviewThreads = data.threads.length;
+  const conversation = issueComments + reviewsRaw + reviewThreads;
+  const threadsResolved = data.threads.filter((t) => t.isResolved).length;
+  const threadsUnresolved = reviewThreads - threadsResolved;
+  const reviewsFiltered = data.reviews.filter(
+    (r) => !(r.state === "COMMENTED" && !r.body?.trim())
+  ).length;
+  const reviewComments = data.threads.reduce((sum, t) => sum + t.comments.length, 0);
+  const threadRoots = reviewThreads;
+  const threadReplies = reviewComments - threadRoots;
+  const totalEntries = entries.length;
+  const pendingEntries = entries.filter((e) => e.action === "pending").length;
+  const expectedConversation = issueComments + reviewsRaw + reviewThreads;
+  if (conversation !== expectedConversation) {
+    warnings.push(
+      `Conversation mismatch: ${conversation} != ${issueComments} + ${reviewsRaw} + ${reviewThreads}`
+    );
+  }
+  if (reviewComments < threadRoots) {
+    warnings.push(
+      `Review comments (${reviewComments}) less than thread roots (${threadRoots})`
+    );
+  }
+  return {
+    conversation,
+    issueComments,
+    reviewsRaw,
+    reviewThreads,
+    threadsResolved,
+    threadsUnresolved,
+    reviewsFiltered,
+    reviewComments,
+    threadRoots,
+    threadReplies,
+    totalEntries,
+    pendingEntries,
+    warnings
+  };
+}
+function formatSummary(stats) {
+  const lines = [];
+  lines.push("Summary:");
+  lines.push(`Conversation: ${stats.conversation}`);
+  lines.push(`  Issue Comments: ${stats.issueComments}`);
+  lines.push(`  Reviews (raw): ${stats.reviewsRaw}`);
+  lines.push(`  Review Threads: ${stats.reviewThreads} (resolved: ${stats.threadsResolved}, unresolved: ${stats.threadsUnresolved})`);
+  lines.push("");
+  lines.push(`Reviews (filtered): ${stats.reviewsFiltered}`);
+  lines.push(`Review Comments: ${stats.reviewComments} (thread roots: ${stats.threadRoots}, replies: ${stats.threadReplies})`);
+  lines.push("");
+  lines.push(`Output Entries: ${stats.totalEntries} (pending: ${stats.pendingEntries})`);
+  if (stats.warnings.length > 0) {
+    lines.push("");
+    lines.push("WARNING: Data inconsistency detected:");
+    for (const w of stats.warnings) {
+      lines.push(`  - ${w}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 // ../ghq/github.com/abekdwight/gh-pr-review-check/src/index.ts
 function detectRepo() {
   try {
@@ -3740,17 +3806,10 @@ async function main(pr, options) {
   const reviewsPath = path.join(outputDir, "reviews.jsonl");
   fs.writeFileSync(reviewsPath, toJsonl(entries));
   log(`Wrote ${reviewsPath} (${entries.length} entries)`);
-  const threadCount = entries.filter((e) => e.type === "thread").length;
-  const reviewCount = entries.filter((e) => e.type === "review").length;
-  const commentCount = entries.filter((e) => e.type === "issue_comment").length;
-  const pendingCount = entries.filter((e) => e.action === "pending").length;
+  const stats = computeStats(data, entries);
   if (!options.quiet) {
     log("");
-    log("Summary:");
-    log(`  Threads: ${threadCount}`);
-    log(`  Reviews: ${reviewCount}`);
-    log(`  Issue Comments: ${commentCount}`);
-    log(`  Pending: ${pendingCount}`);
+    log(formatSummary(stats));
     log("");
   }
   if (options.json) {
@@ -3759,11 +3818,19 @@ async function main(pr, options) {
       prNumber,
       owner,
       repo,
-      entries: entries.length,
-      threads: threadCount,
-      reviews: reviewCount,
-      issueComments: commentCount,
-      pending: pendingCount
+      conversation: stats.conversation,
+      issueComments: stats.issueComments,
+      reviewsRaw: stats.reviewsRaw,
+      reviewThreads: stats.reviewThreads,
+      threadsResolved: stats.threadsResolved,
+      threadsUnresolved: stats.threadsUnresolved,
+      reviewsFiltered: stats.reviewsFiltered,
+      reviewComments: stats.reviewComments,
+      threadRoots: stats.threadRoots,
+      threadReplies: stats.threadReplies,
+      totalEntries: stats.totalEntries,
+      pendingEntries: stats.pendingEntries,
+      warnings: stats.warnings
     }));
   } else {
     console.log(outputDir);
