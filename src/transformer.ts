@@ -12,9 +12,9 @@ import type {
 const REACTION_TO_ACTION: Record<string, ActionStatus> = {
   '+1': 'done',
   '-1': 'skip',
-  'eyes': 'in_progress',
+  'eyes': 'fix',
   'hooray': 'done',
-  'rocket': 'in_progress',
+  'rocket': 'fix',
 };
 
 /**
