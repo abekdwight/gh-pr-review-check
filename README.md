@@ -34,36 +34,81 @@ gh pr-review-check 728 --quiet
 
 - `-R, --repo <repo>` - Repository in OWNER/REPO format (auto-detected from cwd)
 - `-o, --output <dir>` - Output directory (default: `/tmp/github.com`)
-- `-j, --json` - Output as JSON (only the output directory path)
+- `-j, --json` - Output as JSON with outputDir, stats, completenessState, and manifest data
 - `-q, --quiet` - Suppress progress messages
 
 ## Output
 
-The command creates a directory structure:
+The command creates three output files (the artifact trio):
 
 ```
 /tmp/github.com/owner/repo/pr/728/
-├── pr-meta.json      # PR metadata (title, branches, state)
-└── reviews.jsonl     # All review entries (one JSON per line)
+├── pr-meta.json             # PR metadata (title, branches, state)
+├── reviews.jsonl            # Review entries (one JSON per line)
+└── collection-manifest.json # Completeness state and source signals
 ```
+
+### Artifact Trio
+
+| File                       | Purpose                                                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-meta.json`             | PR metadata: title, base/head branches, author, state                                                                                             |
+| `reviews.jsonl`            | Review entries (threads, reviews, issue comments). **Only authoritative when `collection-manifest.json` reports `completenessState: "complete"`** |
+| `collection-manifest.json` | Completeness state, source exhaustion flags, warnings, and errors                                                                                 |
+
+### collection-manifest.json Structure
+
+```json
+{
+  "completenessState": "complete" | "incomplete" | "inconclusive",
+  "fallbackUsed": false,
+  "counts": { ... },
+  "sources": {
+    "reviewThreads": { "exhausted": true, "state": "complete", "warnings": [], "errors": [] },
+    "issueComments": { "exhausted": true, "state": "complete", "warnings": [], "errors": [] },
+    "reviewComments": { "exhausted": true, "state": "complete", "warnings": [], "errors": [] }
+  },
+  "warnings": [],
+  "errors": []
+}
+```
+
+**Important**: Always check `completenessState` before treating `reviews.jsonl` as a complete dataset. When `completenessState` is not `"complete"`, the data may be partial due to API errors, pagination failures, or source inconsistencies.
 
 ### reviews.jsonl Format
 
 Each line is a JSON object representing a review entry:
 
 **Thread (inline review comments):**
+
 ```json
 {"id":"PRRT_xxx","type":"thread","commit":"abc123","path":"src/app.ts","line":42,"is_resolved":false,"action":"pending","comments":[...]}
 ```
 
 **Review (APPROVED, CHANGES_REQUESTED, etc.):**
+
 ```json
-{"id":"PRR_xxx","type":"review","commit":"abc123","author":"copilot","state":"APPROVED","body":"","action":"pending"}
+{
+  "id": "PRR_xxx",
+  "type": "review",
+  "commit": "abc123",
+  "author": "copilot",
+  "state": "APPROVED",
+  "body": "",
+  "action": "pending"
+}
 ```
 
 **Issue Comment (PR-level comments):**
+
 ```json
-{"id":"IC_xxx","type":"issue_comment","author":"coderabbitai","body":"Summary...","action":"pending"}
+{
+  "id": "IC_xxx",
+  "type": "issue_comment",
+  "author": "coderabbitai",
+  "body": "Summary...",
+  "action": "pending"
+}
 ```
 
 ### Action Status
@@ -86,8 +131,13 @@ npm install
 npm run build
 
 # Test locally
-node dist/index.js 728 -R owner/repo
+node dist/index.cjs 728 -R owner/repo
 ```
+
+### Test Fixtures
+
+Large test snapshots live under `src/test-fixtures/<module>/`.
+Keep fixture data next to the module's tests conceptually, while making it obvious that the assets are test-only.
 
 ## License
 

@@ -26,9 +26,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/error.js
+// node_modules/commander/lib/error.js
 var require_error = __commonJS({
-  "../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/error.js"(exports2) {
+  "node_modules/commander/lib/error.js"(exports2) {
     var CommanderError2 = class extends Error {
       /**
        * Constructs the CommanderError class
@@ -61,9 +61,9 @@ var require_error = __commonJS({
   }
 });
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/argument.js
+// node_modules/commander/lib/argument.js
 var require_argument = __commonJS({
-  "../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/argument.js"(exports2) {
+  "node_modules/commander/lib/argument.js"(exports2) {
     var { InvalidArgumentError: InvalidArgumentError2 } = require_error();
     var Argument2 = class {
       /**
@@ -189,9 +189,9 @@ var require_argument = __commonJS({
   }
 });
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/help.js
+// node_modules/commander/lib/help.js
 var require_help = __commonJS({
-  "../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/help.js"(exports2) {
+  "node_modules/commander/lib/help.js"(exports2) {
     var { humanReadableArgName } = require_argument();
     var Help2 = class {
       constructor() {
@@ -791,9 +791,9 @@ ${itemIndentStr}`);
   }
 });
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/option.js
+// node_modules/commander/lib/option.js
 var require_option = __commonJS({
-  "../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/option.js"(exports2) {
+  "node_modules/commander/lib/option.js"(exports2) {
     var { InvalidArgumentError: InvalidArgumentError2 } = require_error();
     var Option2 = class {
       /**
@@ -1104,9 +1104,9 @@ var require_option = __commonJS({
   }
 });
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/suggestSimilar.js
+// node_modules/commander/lib/suggestSimilar.js
 var require_suggestSimilar = __commonJS({
-  "../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/suggestSimilar.js"(exports2) {
+  "node_modules/commander/lib/suggestSimilar.js"(exports2) {
     var maxDistance = 3;
     function editDistance(a, b) {
       if (Math.abs(a.length - b.length) > maxDistance)
@@ -1184,9 +1184,9 @@ var require_suggestSimilar = __commonJS({
   }
 });
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/command.js
+// node_modules/commander/lib/command.js
 var require_command = __commonJS({
-  "../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/lib/command.js"(exports2) {
+  "node_modules/commander/lib/command.js"(exports2) {
     var EventEmitter = require("node:events").EventEmitter;
     var childProcess = require("node:child_process");
     var path2 = require("node:path");
@@ -3430,9 +3430,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
   }
 });
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/index.js
+// node_modules/commander/index.js
 var require_commander = __commonJS({
-  "../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/index.js"(exports2) {
+  "node_modules/commander/index.js"(exports2) {
     var { Argument: Argument2 } = require_argument();
     var { Command: Command2 } = require_command();
     var { CommanderError: CommanderError2, InvalidArgumentError: InvalidArgumentError2 } = require_error();
@@ -3452,7 +3452,7 @@ var require_commander = __commonJS({
   }
 });
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/node_modules/commander/esm.mjs
+// node_modules/commander/esm.mjs
 var import_index = __toESM(require_commander(), 1);
 var {
   program,
@@ -3469,12 +3469,12 @@ var {
   Help
 } = import_index.default;
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/src/index.ts
+// src/index.ts
 var import_node_child_process3 = require("node:child_process");
 var fs = __toESM(require("node:fs"), 1);
 var path = __toESM(require("node:path"), 1);
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/src/utils.ts
+// src/utils.ts
 function parsePRUrl(url) {
   let cleanUrl = url.replace(/^https?:\/\//, "");
   cleanUrl = cleanUrl.replace(/\/(files|commits|checks|conflicts)$/, "");
@@ -3489,24 +3489,80 @@ function parsePRUrl(url) {
   };
 }
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/src/fetcher.ts
+// src/fetcher.ts
 var import_node_child_process = require("node:child_process");
+var createGraphQLCollectionError = (kind, message) => {
+  const error = new Error(`[${kind}] ${message}`);
+  error.name = kind;
+  return error;
+};
+var parseGraphQLResponse = (result, context) => {
+  const parsed = JSON.parse(result);
+  if (Array.isArray(parsed.errors) && parsed.errors.length > 0) {
+    const errorMessages = parsed.errors.map((entry) => entry.message).filter((message) => typeof message === "string").join("; ");
+    throw createGraphQLCollectionError(
+      "GRAPHQL_PARTIAL_DATA",
+      `${context} returned errors: ${errorMessages || "unknown GraphQL error"}`
+    );
+  }
+  if (!parsed.data) {
+    throw createGraphQLCollectionError(
+      "GRAPHQL_INVALID_SHAPE",
+      `${context} response did not include data`
+    );
+  }
+  return parsed.data;
+};
+var requirePageInfo = (pageInfo, context) => {
+  if (!pageInfo || typeof pageInfo.hasNextPage !== "boolean") {
+    throw createGraphQLCollectionError(
+      "GRAPHQL_INVALID_SHAPE",
+      `${context} response did not include a valid pageInfo`
+    );
+  }
+  return pageInfo;
+};
+var getNextCursorOrNull = (pageInfo, context) => {
+  if (!pageInfo.hasNextPage) {
+    return null;
+  }
+  if (typeof pageInfo.endCursor !== "string" || pageInfo.endCursor.trim() === "") {
+    throw createGraphQLCollectionError(
+      "GRAPHQL_INVALID_PAGE_INFO",
+      `${context} returned hasNextPage=true without a usable endCursor`
+    );
+  }
+  return pageInfo.endCursor;
+};
 function runGh(args) {
   try {
-    return (0, import_node_child_process.execSync)(`gh ${args}`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    return (0, import_node_child_process.execSync)(`gh ${args}`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
   } catch (error) {
     const err = error;
     throw new Error(`gh command failed: ${err.stderr || err.message}`);
   }
 }
 function runGhApiGraphQL(query, variables) {
-  const varArgs = Object.entries(variables).map(([key, value]) => {
+  const varArgs = Object.entries(variables).filter(([, value]) => value !== void 0).map(([key, value]) => {
     if (typeof value === "number") {
       return `-F ${key}=${value}`;
     }
     return `-f ${key}=${value}`;
   }).join(" ");
-  return runGh(`api graphql -f query='${query}' ${varArgs}`);
+  return runGh(
+    `api graphql -f query='${query}'${varArgs ? ` ${varArgs}` : ""}`
+  );
+}
+function fetchPaginatedRestCollection(endpoint) {
+  const json = runGh(`api --paginate --slurp ${endpoint}`);
+  const parsed = JSON.parse(json);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Unexpected paginated REST response shape for ${endpoint}`);
+  }
+  return parsed.flatMap((page) => Array.isArray(page) ? page : [page]);
 }
 function fetchPRMeta(config) {
   const json = runGh(
@@ -3515,17 +3571,17 @@ function fetchPRMeta(config) {
   return JSON.parse(json);
 }
 function fetchReviewThreads(config) {
-  const query = `
-    query($owner: String!, $repo: String!, $number: Int!) {
+  const reviewThreadsQuery = `
+    query($owner: String!, $repo: String!, $number: Int!, $threadsAfter: String) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
-          reviewThreads(first: 100) {
+          reviewThreads(first: 100, after: $threadsAfter) {
             nodes {
               id
               isResolved
               path
               line
-              comments(first: 50) {
+              comments(first: 100) {
                 nodes {
                   id
                   body
@@ -3537,27 +3593,124 @@ function fetchReviewThreads(config) {
                     }
                   }
                 }
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
               }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
             }
           }
         }
       }
     }
   `;
-  const result = runGhApiGraphQL(query, {
-    owner: config.owner,
-    repo: config.repo,
-    number: config.prNumber
-  });
-  const data = JSON.parse(result);
-  const rawThreads = data.data.repository.pullRequest.reviewThreads.nodes;
-  return rawThreads.map((thread) => ({
-    id: thread.id,
-    isResolved: thread.isResolved,
-    path: thread.path,
-    line: thread.line,
-    comments: thread.comments.nodes
-  }));
+  const threadCommentsQuery = `
+    query($threadId: ID!, $commentsAfter: String) {
+      node(id: $threadId) {
+        ... on PullRequestReviewThread {
+          comments(first: 100, after: $commentsAfter) {
+            nodes {
+              id
+              body
+              author { login }
+              createdAt
+              reactions(first: 20) {
+                nodes {
+                  content
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+  `;
+  const allThreads = [];
+  let threadsAfter;
+  while (true) {
+    const result = runGhApiGraphQL(reviewThreadsQuery, {
+      owner: config.owner,
+      repo: config.repo,
+      number: config.prNumber,
+      threadsAfter
+    });
+    const data = parseGraphQLResponse(
+      result,
+      "reviewThreads"
+    );
+    const reviewThreadsConnection = data.repository?.pullRequest?.reviewThreads;
+    if (!reviewThreadsConnection || !Array.isArray(reviewThreadsConnection.nodes)) {
+      throw createGraphQLCollectionError(
+        "GRAPHQL_INVALID_SHAPE",
+        "reviewThreads response did not include nodes"
+      );
+    }
+    for (const thread of reviewThreadsConnection.nodes) {
+      if (!thread.comments || !Array.isArray(thread.comments.nodes)) {
+        throw createGraphQLCollectionError(
+          "GRAPHQL_INVALID_SHAPE",
+          `review thread ${thread.id} did not include comment nodes`
+        );
+      }
+      const threadComments = [...thread.comments.nodes];
+      let commentsAfter = getNextCursorOrNull(
+        requirePageInfo(
+          thread.comments.pageInfo,
+          `thread ${thread.id} comments`
+        ),
+        `thread ${thread.id} comments`
+      );
+      while (commentsAfter !== null) {
+        const commentsResult = runGhApiGraphQL(threadCommentsQuery, {
+          threadId: thread.id,
+          commentsAfter
+        });
+        const commentsData = parseGraphQLResponse(
+          commentsResult,
+          `thread ${thread.id} comments`
+        );
+        const commentsConnection = commentsData.node?.comments;
+        if (!commentsConnection || !Array.isArray(commentsConnection.nodes)) {
+          throw createGraphQLCollectionError(
+            "GRAPHQL_INVALID_SHAPE",
+            `thread ${thread.id} comments page did not include nodes`
+          );
+        }
+        threadComments.push(...commentsConnection.nodes);
+        commentsAfter = getNextCursorOrNull(
+          requirePageInfo(
+            commentsConnection.pageInfo,
+            `thread ${thread.id} comments`
+          ),
+          `thread ${thread.id} comments`
+        );
+      }
+      allThreads.push({
+        id: thread.id,
+        isResolved: thread.isResolved,
+        path: thread.path,
+        line: thread.line,
+        comments: threadComments
+      });
+    }
+    const nextThreadsCursor = getNextCursorOrNull(
+      requirePageInfo(reviewThreadsConnection.pageInfo, "reviewThreads"),
+      "reviewThreads"
+    );
+    if (nextThreadsCursor === null) {
+      break;
+    }
+    threadsAfter = nextThreadsCursor;
+  }
+  return allThreads;
 }
 function fetchReviews(config) {
   const json = runGh(
@@ -3567,46 +3720,34 @@ function fetchReviews(config) {
   return data.reviews || [];
 }
 function fetchIssueComments(config) {
-  const json = runGh(`api repos/${config.owner}/${config.repo}/issues/${config.prNumber}/comments`);
-  const comments = JSON.parse(json);
-  return comments.map((c) => ({
-    id: c.node_id,
-    node_id: c.node_id,
-    author: c.user ? { login: c.user.login } : null,
-    body: c.body,
-    createdAt: c.created_at,
-    reactions: {
-      nodes: [
-        ...(c.reactions["+1"] || 0) > 0 ? [{ content: "+1" }] : [],
-        ...(c.reactions["-1"] || 0) > 0 ? [{ content: "-1" }] : [],
-        ...(c.reactions.eyes || 0) > 0 ? [{ content: "eyes" }] : []
-      ]
-    }
-  }));
+  const comments = fetchPaginatedRestCollection(
+    `repos/${config.owner}/${config.repo}/issues/${config.prNumber}/comments`
+  );
+  return comments.map((comment) => {
+    const reactions = comment.reactions ?? {};
+    return {
+      id: comment.node_id,
+      node_id: comment.node_id,
+      author: comment.user ? { login: comment.user.login } : null,
+      body: comment.body,
+      createdAt: comment.created_at,
+      reactions: {
+        nodes: [
+          ...(reactions["+1"] ?? 0) > 0 ? [{ content: "+1" }] : [],
+          ...(reactions["-1"] ?? 0) > 0 ? [{ content: "-1" }] : [],
+          ...(reactions.eyes ?? 0) > 0 ? [{ content: "eyes" }] : []
+        ]
+      }
+    };
+  });
 }
 function fetchReviewComments(config) {
-  const json = runGh(
-    `api repos/${config.owner}/${config.repo}/pulls/${config.prNumber}/comments`
+  return fetchPaginatedRestCollection(
+    `repos/${config.owner}/${config.repo}/pulls/${config.prNumber}/comments`
   );
-  return JSON.parse(json);
-}
-function fetchAll(config, quiet = false) {
-  const log = quiet ? () => {
-  } : console.error;
-  log("Fetching PR metadata...");
-  const meta = fetchPRMeta(config);
-  log("Fetching review threads...");
-  const threads = fetchReviewThreads(config);
-  log("Fetching reviews...");
-  const reviews = fetchReviews(config);
-  log("Fetching issue comments...");
-  const issueComments = fetchIssueComments(config);
-  log("Fetching review comments...");
-  const reviewComments = fetchReviewComments(config);
-  return { meta, threads, reviews, issueComments, reviewComments };
 }
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/src/transformer.ts
+// src/transformer.ts
 var REACTION_TO_ACTION = {
   "+1": "done",
   "-1": "skip",
@@ -3711,7 +3852,31 @@ function toJsonl(entries) {
   return entries.map((e) => JSON.stringify(e)).join("\n");
 }
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/src/stats.ts
+// src/stats.ts
+var toSourceMessages = (sourceName, messages) => {
+  return messages.map((message) => `[${sourceName}] ${message}`);
+};
+var uniqueMessages = (messages) => {
+  return Array.from(
+    new Set(messages.filter((message) => message.trim().length > 0))
+  );
+};
+var deriveCompletenessState = (sources, warnings, errors) => {
+  const sourceList = Object.values(sources);
+  if (sourceList.some((source) => source.state === "inconclusive")) {
+    return "inconclusive";
+  }
+  if (!sourceList.every((source) => source.exhausted)) {
+    return "incomplete";
+  }
+  if (sourceList.some((source) => source.state === "incomplete")) {
+    return "incomplete";
+  }
+  if (warnings.length > 0 || errors.length > 0) {
+    return "incomplete";
+  }
+  return "complete";
+};
 function computeStats(data, entries) {
   const warnings = [];
   const issueComments = data.issueComments.length;
@@ -3723,7 +3888,10 @@ function computeStats(data, entries) {
   const reviewsFiltered = data.reviews.filter(
     (r) => !(r.state === "COMMENTED" && !r.body?.trim())
   ).length;
-  const reviewComments = data.threads.reduce((sum, t) => sum + t.comments.length, 0);
+  const reviewComments = data.threads.reduce(
+    (sum, t) => sum + t.comments.length,
+    0
+  );
   const threadRoots = reviewThreads;
   const threadReplies = reviewComments - threadRoots;
   const totalEntries = entries.length;
@@ -3761,12 +3929,18 @@ function formatSummary(stats) {
   lines.push(`Conversation: ${stats.conversation}`);
   lines.push(`  Issue Comments: ${stats.issueComments}`);
   lines.push(`  Reviews (raw): ${stats.reviewsRaw}`);
-  lines.push(`  Review Threads: ${stats.reviewThreads} (resolved: ${stats.threadsResolved}, unresolved: ${stats.threadsUnresolved})`);
+  lines.push(
+    `  Review Threads: ${stats.reviewThreads} (resolved: ${stats.threadsResolved}, unresolved: ${stats.threadsUnresolved})`
+  );
   lines.push("");
   lines.push(`Reviews (filtered): ${stats.reviewsFiltered}`);
-  lines.push(`Review Comments: ${stats.reviewComments} (thread roots: ${stats.threadRoots}, replies: ${stats.threadReplies})`);
+  lines.push(
+    `Review Comments: ${stats.reviewComments} (thread roots: ${stats.threadRoots}, replies: ${stats.threadReplies})`
+  );
   lines.push("");
-  lines.push(`Output Entries: ${stats.totalEntries} (pending: ${stats.pendingEntries})`);
+  lines.push(
+    `Output Entries: ${stats.totalEntries} (pending: ${stats.pendingEntries})`
+  );
   if (stats.warnings.length > 0) {
     lines.push("");
     lines.push("WARNING: Data inconsistency detected:");
@@ -3776,8 +3950,61 @@ function formatSummary(stats) {
   }
   return lines.join("\n");
 }
+function computeCollectionManifest(data, entries, stats, signals) {
+  const sources = {
+    reviewThreads: {
+      exhausted: signals.sources.reviewThreads.exhausted,
+      state: signals.sources.reviewThreads.state,
+      count: data.threads.length,
+      warnings: uniqueMessages(signals.sources.reviewThreads.warnings),
+      errors: uniqueMessages(signals.sources.reviewThreads.errors)
+    },
+    issueComments: {
+      exhausted: signals.sources.issueComments.exhausted,
+      state: signals.sources.issueComments.state,
+      count: data.issueComments.length,
+      warnings: uniqueMessages(signals.sources.issueComments.warnings),
+      errors: uniqueMessages(signals.sources.issueComments.errors)
+    },
+    reviewComments: {
+      exhausted: signals.sources.reviewComments.exhausted,
+      state: signals.sources.reviewComments.state,
+      count: data.reviewComments.length,
+      warnings: uniqueMessages(signals.sources.reviewComments.warnings),
+      errors: uniqueMessages(signals.sources.reviewComments.errors)
+    }
+  };
+  const warnings = uniqueMessages([
+    ...stats.warnings,
+    ...signals.warnings,
+    ...toSourceMessages("reviewThreads", sources.reviewThreads.warnings),
+    ...toSourceMessages("issueComments", sources.issueComments.warnings),
+    ...toSourceMessages("reviewComments", sources.reviewComments.warnings)
+  ]);
+  const errors = uniqueMessages([
+    ...signals.errors,
+    ...toSourceMessages("reviewThreads", sources.reviewThreads.errors),
+    ...toSourceMessages("issueComments", sources.issueComments.errors),
+    ...toSourceMessages("reviewComments", sources.reviewComments.errors)
+  ]);
+  return {
+    completenessState: deriveCompletenessState(sources, warnings, errors),
+    fallbackUsed: signals.fallbackUsed,
+    counts: {
+      issueComments: data.issueComments.length,
+      reviewsRaw: data.reviews.length,
+      reviewThreads: data.threads.length,
+      reviewComments: data.reviewComments.length,
+      totalEntries: entries.length,
+      pendingEntries: stats.pendingEntries
+    },
+    sources,
+    warnings,
+    errors
+  };
+}
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/src/resolve.ts
+// src/resolve.ts
 var import_node_child_process2 = require("node:child_process");
 var STATUS_REACTIONS = {
   done: "+1",
@@ -3897,13 +4124,138 @@ function resolve(options) {
   console.error(`Done`);
 }
 
-// ../ghq/github.com/abekdwight/gh-pr-review-check/src/index.ts
+// src/index.ts
+var GRAPHQL_INCONCLUSIVE_ERROR_NAMES = /* @__PURE__ */ new Set([
+  "GRAPHQL_PARTIAL_DATA",
+  "GRAPHQL_INVALID_PAGE_INFO"
+]);
+var createInitialCollectionSignals = () => ({
+  fallbackUsed: false,
+  warnings: [],
+  errors: [],
+  sources: {
+    reviewThreads: {
+      exhausted: false,
+      state: "incomplete",
+      warnings: [],
+      errors: []
+    },
+    issueComments: {
+      exhausted: false,
+      state: "incomplete",
+      warnings: [],
+      errors: []
+    },
+    reviewComments: {
+      exhausted: false,
+      state: "incomplete",
+      warnings: [],
+      errors: []
+    }
+  }
+});
+var toErrorMessage = (error) => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+};
+var toErrorName = (error) => {
+  if (error instanceof Error && typeof error.name === "string") {
+    return error.name;
+  }
+  return "";
+};
+var classifyTrackedSourceState = (error) => {
+  const errorName = toErrorName(error);
+  const errorMessage = toErrorMessage(error);
+  if (GRAPHQL_INCONCLUSIVE_ERROR_NAMES.has(errorName)) {
+    return "inconclusive";
+  }
+  if (errorMessage.includes("GRAPHQL_PARTIAL_DATA") || errorMessage.includes("GRAPHQL_INVALID_PAGE_INFO")) {
+    return "inconclusive";
+  }
+  return "incomplete";
+};
+var markTrackedSourceSuccess = (signals, sourceName) => {
+  signals.sources[sourceName] = {
+    exhausted: true,
+    state: "complete",
+    warnings: [],
+    errors: []
+  };
+};
+var markTrackedSourceFailure = (signals, sourceName, error) => {
+  const state = classifyTrackedSourceState(error);
+  const message = toErrorMessage(error);
+  signals.sources[sourceName] = {
+    exhausted: false,
+    state,
+    warnings: [],
+    errors: [message]
+  };
+};
+var collectDataWithSignals = (config, quiet) => {
+  const log = quiet ? () => {
+  } : console.error;
+  const signals = createInitialCollectionSignals();
+  log("Fetching PR metadata...");
+  const meta = fetchPRMeta(config);
+  let threads = [];
+  log("Fetching review threads...");
+  try {
+    threads = fetchReviewThreads(config);
+    markTrackedSourceSuccess(signals, "reviewThreads");
+  } catch (error) {
+    markTrackedSourceFailure(signals, "reviewThreads", error);
+  }
+  let reviews = [];
+  log("Fetching reviews...");
+  try {
+    reviews = fetchReviews(config);
+  } catch (error) {
+    const message = toErrorMessage(error);
+    signals.errors.push(`[reviews] ${message}`);
+    signals.warnings.push(
+      "reviews source failed; completeness downgraded to incomplete"
+    );
+  }
+  let issueComments = [];
+  log("Fetching issue comments...");
+  try {
+    issueComments = fetchIssueComments(config);
+    markTrackedSourceSuccess(signals, "issueComments");
+  } catch (error) {
+    markTrackedSourceFailure(signals, "issueComments", error);
+  }
+  let reviewComments = [];
+  log("Fetching review comments...");
+  try {
+    reviewComments = fetchReviewComments(config);
+    markTrackedSourceSuccess(signals, "reviewComments");
+  } catch (error) {
+    markTrackedSourceFailure(signals, "reviewComments", error);
+  }
+  return {
+    data: {
+      meta,
+      threads,
+      reviews,
+      issueComments,
+      reviewComments
+    },
+    signals
+  };
+};
 function detectRepo() {
   try {
-    const result = (0, import_node_child_process3.execSync)('gh repo view --json owner,name -q ".owner.login+\\"/\\"+.name"', {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim();
+    const result = (0, import_node_child_process3.execSync)(
+      'gh repo view --json owner,name -q ".owner.login+\\"/\\"+.name"',
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    ).trim();
     const [owner, repo] = result.split("/");
     return { owner, repo };
   } catch {
@@ -3912,48 +4264,68 @@ function detectRepo() {
 }
 var program2 = new Command();
 program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.4");
-program2.argument("[pr]", "PR number or URL (defaults to current branch)").option("-o, --output <dir>", "Output directory", "/tmp/github.com").option("-R, --repo <repo>", "Repository in OWNER/REPO format (auto-detected from cwd)").option("-j, --json", "Output as JSON (only the output directory path)").option("-q, --quiet", "Suppress progress messages").action(async (pr, options) => {
-  try {
-    await syncCommand(pr, options);
-  } catch (error) {
-    const err = error;
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
-  }
-});
-program2.command("resolve <entry-id>").description("Mark an entry as done, skip, or in_progress by adding a reaction").requiredOption("-s, --status <status>", "Status to set (done, skip, in_progress)").option("-c, --comment <text>", "Add a comment with the status change").option("-R, --repo <repo>", "Repository in OWNER/REPO format (auto-detected from cwd)").action((entryId, options) => {
-  try {
-    const status = options.status;
-    if (!["done", "skip", "in_progress"].includes(status)) {
-      throw new Error(`Invalid status: ${status}. Must be one of: done, skip, in_progress`);
+program2.argument("[pr]", "PR number or URL (defaults to current branch)").option("-o, --output <dir>", "Output directory", "/tmp/github.com").option(
+  "-R, --repo <repo>",
+  "Repository in OWNER/REPO format (auto-detected from cwd)"
+).option(
+  "-j, --json",
+  "Output as JSON with outputDir, stats, completenessState, and manifest data"
+).option("-q, --quiet", "Suppress progress messages").action(
+  async (pr, options) => {
+    try {
+      await syncCommand(pr, options);
+    } catch (error) {
+      const err = error;
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
     }
-    let owner;
-    let repo;
-    if (options.repo) {
-      const [o, r] = options.repo.split("/");
-      owner = o;
-      repo = r;
-    } else {
-      const detected = detectRepo();
-      if (!detected) {
-        throw new Error("--repo is required when no git repo detected");
+  }
+);
+program2.command("resolve <entry-id>").description(
+  "Mark an entry as done, skip, or in_progress by adding a reaction"
+).requiredOption(
+  "-s, --status <status>",
+  "Status to set (done, skip, in_progress)"
+).option("-c, --comment <text>", "Add a comment with the status change").option(
+  "-R, --repo <repo>",
+  "Repository in OWNER/REPO format (auto-detected from cwd)"
+).action(
+  (entryId, options) => {
+    try {
+      const status = options.status;
+      if (!["done", "skip", "in_progress"].includes(status)) {
+        throw new Error(
+          `Invalid status: ${status}. Must be one of: done, skip, in_progress`
+        );
       }
-      owner = detected.owner;
-      repo = detected.repo;
+      let owner;
+      let repo;
+      if (options.repo) {
+        const [o, r] = options.repo.split("/");
+        owner = o;
+        repo = r;
+      } else {
+        const detected = detectRepo();
+        if (!detected) {
+          throw new Error("--repo is required when no git repo detected");
+        }
+        owner = detected.owner;
+        repo = detected.repo;
+      }
+      resolve({
+        owner,
+        repo,
+        entryId,
+        status,
+        comment: options.comment
+      });
+    } catch (error) {
+      const err = error;
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
     }
-    resolve({
-      owner,
-      repo,
-      entryId,
-      status,
-      comment: options.comment
-    });
-  } catch (error) {
-    const err = error;
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
   }
-});
+);
 async function syncCommand(pr, options) {
   const log = options.quiet ? () => {
   } : console.error;
@@ -3979,7 +4351,9 @@ async function syncCommand(pr, options) {
       if (!repoStr) {
         const detected = detectRepo();
         if (!detected) {
-          throw new Error("--repo is required when PR is just a number and no git repo detected");
+          throw new Error(
+            "--repo is required when PR is just a number and no git repo detected"
+          );
         }
         owner = detected.owner;
         repo = detected.repo;
@@ -3991,16 +4365,28 @@ async function syncCommand(pr, options) {
       prNumber = parseInt(pr, 10);
     }
   } else {
-    const prUrl = (0, import_node_child_process3.execSync)("gh pr view --json url -q .url", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    const prUrl = (0, import_node_child_process3.execSync)("gh pr view --json url -q .url", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
     const parsed = parsePRUrl(prUrl);
     owner = parsed.owner;
     repo = parsed.repo;
     prNumber = parsed.prNumber;
   }
   log(`Syncing PR #${prNumber} from ${owner}/${repo}...`);
-  const outputDir = path.join(options.output, owner, repo, "pr", prNumber.toString());
+  const outputDir = path.join(
+    options.output,
+    owner,
+    repo,
+    "pr",
+    prNumber.toString()
+  );
   fs.mkdirSync(outputDir, { recursive: true });
-  const data = fetchAll({ owner, repo, prNumber }, options.quiet ?? false);
+  const { data, signals } = collectDataWithSignals(
+    { owner, repo, prNumber },
+    options.quiet ?? false
+  );
   const metaPath = path.join(outputDir, "pr-meta.json");
   fs.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
   log(`Wrote ${metaPath}`);
@@ -4009,31 +4395,42 @@ async function syncCommand(pr, options) {
   fs.writeFileSync(reviewsPath, toJsonl(entries));
   log(`Wrote ${reviewsPath} (${entries.length} entries)`);
   const stats = computeStats(data, entries);
+  const manifest = computeCollectionManifest(data, entries, stats, signals);
+  const manifestPath = path.join(outputDir, "collection-manifest.json");
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  log(`Wrote ${manifestPath}`);
   if (!options.quiet) {
     log("");
     log(formatSummary(stats));
+    log(`Completeness: ${manifest.completenessState}`);
     log("");
   }
   if (options.json) {
-    console.log(JSON.stringify({
-      outputDir,
-      prNumber,
-      owner,
-      repo,
-      conversation: stats.conversation,
-      issueComments: stats.issueComments,
-      reviewsRaw: stats.reviewsRaw,
-      reviewThreads: stats.reviewThreads,
-      threadsResolved: stats.threadsResolved,
-      threadsUnresolved: stats.threadsUnresolved,
-      reviewsFiltered: stats.reviewsFiltered,
-      reviewComments: stats.reviewComments,
-      threadRoots: stats.threadRoots,
-      threadReplies: stats.threadReplies,
-      totalEntries: stats.totalEntries,
-      pendingEntries: stats.pendingEntries,
-      warnings: stats.warnings
-    }));
+    console.log(
+      JSON.stringify({
+        outputDir,
+        prNumber,
+        owner,
+        repo,
+        conversation: stats.conversation,
+        issueComments: stats.issueComments,
+        reviewsRaw: stats.reviewsRaw,
+        reviewThreads: stats.reviewThreads,
+        threadsResolved: stats.threadsResolved,
+        threadsUnresolved: stats.threadsUnresolved,
+        reviewsFiltered: stats.reviewsFiltered,
+        reviewComments: stats.reviewComments,
+        threadRoots: stats.threadRoots,
+        threadReplies: stats.threadReplies,
+        totalEntries: stats.totalEntries,
+        pendingEntries: stats.pendingEntries,
+        warnings: stats.warnings,
+        completenessState: manifest.completenessState,
+        fallbackUsed: manifest.fallbackUsed,
+        manifestWarnings: manifest.warnings,
+        manifestErrors: manifest.errors
+      })
+    );
   } else {
     console.log(outputDir);
   }
