@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { transform, toJsonl } from './transformer.js';
-import type { FetchedData, ReviewThread, Review, IssueComment, ReviewComment } from './types.js';
+import type {
+  FetchedData,
+  ReviewThread,
+  Review,
+  IssueComment,
+  ReviewComment,
+  OutputEntry,
+} from './types.js';
 
 describe('transform', () => {
   const createMockData = (overrides: Partial<FetchedData> = {}): FetchedData => ({
@@ -145,15 +152,37 @@ describe('transform', () => {
     const data = createMockData({ threads: [thread], reviewComments: [reviewComment] });
     const entries = transform(data);
 
-    expect(entries[0].commit).toBe('commit123');
+    const entry = entries[0];
+    expect(entry.type).toBe('thread');
+    if (entry.type !== 'thread') {
+      throw new Error(`Expected thread entry but got ${entry.type}`);
+    }
+    expect(entry.commit).toBe('commit123');
   });
 });
 
 describe('toJsonl', () => {
   it('converts entries to JSONL format', () => {
-    const entries = [
-      { id: '1', type: 'thread', action: 'pending' as const },
-      { id: '2', type: 'review', action: 'done' as const },
+    const entries: OutputEntry[] = [
+      {
+        id: '1',
+        type: 'thread',
+        commit: null,
+        path: 'src/index.ts',
+        line: 1,
+        is_resolved: false,
+        action: 'pending',
+        comments: [],
+      },
+      {
+        id: '2',
+        type: 'review',
+        commit: 'abc123',
+        author: 'reviewer',
+        state: 'APPROVED',
+        body: 'Looks good',
+        action: 'done',
+      },
     ];
 
     const jsonl = toJsonl(entries);
