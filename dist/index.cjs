@@ -3751,9 +3751,9 @@ function fetchReviewComments(config) {
 var REACTION_TO_ACTION = {
   "+1": "done",
   "-1": "skip",
-  "eyes": "in_progress",
+  "eyes": "fix",
   "hooray": "done",
-  "rocket": "in_progress"
+  "rocket": "fix"
 };
 function getActionFromReactions(reactions) {
   if (!reactions?.nodes?.length) return null;
