@@ -19,7 +19,12 @@ export interface ReviewThreadComment {
 export interface Review {
   id: string;
   author: { login: string } | null;
-  state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED' | 'PENDING' | 'DISMISSED';
+  state:
+    | "APPROVED"
+    | "CHANGES_REQUESTED"
+    | "COMMENTED"
+    | "PENDING"
+    | "DISMISSED";
   body: string;
   commit: { oid: string } | null;
   submittedAt: string | null;
@@ -52,7 +57,7 @@ export interface ReviewComment {
 
 // Output types (JSONL entries)
 
-export type ActionStatus = 'pending' | 'fix' | 'skip' | 'done';
+export type ActionStatus = "pending" | "fix" | "skip" | "done";
 
 export interface BaseEntry {
   id: string;
@@ -61,7 +66,7 @@ export interface BaseEntry {
 }
 
 export interface ThreadEntry extends BaseEntry {
-  type: 'thread';
+  type: "thread";
   commit: string | null;
   path: string | null;
   line: number | null;
@@ -75,7 +80,7 @@ export interface ThreadEntry extends BaseEntry {
 }
 
 export interface ReviewEntry extends BaseEntry {
-  type: 'review';
+  type: "review";
   commit: string | null;
   author: string | null;
   state: string;
@@ -83,7 +88,7 @@ export interface ReviewEntry extends BaseEntry {
 }
 
 export interface IssueCommentEntry extends BaseEntry {
-  type: 'issue_comment';
+  type: "issue_comment";
   author: string | null;
   body: string;
 }
@@ -117,4 +122,52 @@ export interface FetchedData {
   reviews: Review[];
   issueComments: IssueComment[];
   reviewComments: ReviewComment[];
+}
+
+export type CompletenessState = "complete" | "incomplete" | "inconclusive";
+
+export interface CollectionSourceSignal {
+  exhausted: boolean;
+  state: CompletenessState;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface CollectionSignals {
+  fallbackUsed: boolean;
+  warnings: string[];
+  errors: string[];
+  sources: {
+    reviewThreads: CollectionSourceSignal;
+    issueComments: CollectionSourceSignal;
+    reviewComments: CollectionSourceSignal;
+  };
+}
+
+export interface CollectionManifestSource {
+  exhausted: boolean;
+  state: CompletenessState;
+  count: number;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface CollectionManifest {
+  completenessState: CompletenessState;
+  fallbackUsed: boolean;
+  counts: {
+    issueComments: number;
+    reviewsRaw: number;
+    reviewThreads: number;
+    reviewComments: number;
+    totalEntries: number;
+    pendingEntries: number;
+  };
+  sources: {
+    reviewThreads: CollectionManifestSource;
+    issueComments: CollectionManifestSource;
+    reviewComments: CollectionManifestSource;
+  };
+  warnings: string[];
+  errors: string[];
 }
