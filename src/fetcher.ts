@@ -156,6 +156,7 @@ function runGh(args: string): string {
     return execSync(`gh ${args}`, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      maxBuffer: 100 * 1024 * 1024,
     });
   } catch (error) {
     const err = error as { stderr?: string; message: string };

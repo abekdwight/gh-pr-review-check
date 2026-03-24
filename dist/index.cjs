@@ -3538,7 +3538,8 @@ function runGh(args) {
   try {
     return (0, import_node_child_process.execSync)(`gh ${args}`, {
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      maxBuffer: 100 * 1024 * 1024
     });
   } catch (error) {
     const err = error;
