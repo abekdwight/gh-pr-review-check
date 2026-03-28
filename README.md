@@ -8,6 +8,8 @@ GitHub CLI extension to sync PR review data for AI-assisted review handling.
 gh extension install abekdwight/gh-pr-review-check
 ```
 
+This extension ships with a committed `dist/index.cjs` bundle so `gh extension install` and `gh extension upgrade` do not rely on a post-install build step.
+
 ## Usage
 
 ```bash
@@ -129,6 +131,9 @@ npm install
 
 # Build
 npm run build
+
+# Commit the rebuilt dist artifact when source changes
+git add dist/index.cjs
 
 # Test locally
 node dist/index.cjs 728 -R owner/repo

@@ -59,6 +59,9 @@ npm run build    # esbuildでdist/index.cjsにバンドル
 npm test         # テスト実行
 ```
 
+- `dist/index.cjs` は配布物として Git 管理する
+- CLIのソースを変更したら `npm run build` 後に `dist/index.cjs` もあわせて更新する
+
 ## 出力仕様
 
 ```

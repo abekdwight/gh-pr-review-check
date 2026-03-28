@@ -3,9 +3,9 @@
   "version": "0.0.4",
   "description": "GitHub CLI extension to sync PR review data for AI-assisted review handling",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
   "bin": {
-    "gh-pr-review-check": "./dist/index.js"
+    "gh-pr-review-check": "./dist/index.cjs"
   },
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/index.cjs",
