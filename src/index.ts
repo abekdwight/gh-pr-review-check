@@ -12,7 +12,7 @@ import {
   fetchReviews,
   fetchReviewThreads,
 } from "./fetcher.js";
-import { transform, toJsonl } from "./transformer.js";
+import { transform, toJson } from "./transformer.js";
 import {
   computeCollectionManifest,
   computeStats,
@@ -381,10 +381,10 @@ async function syncCommand(
   fs.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
   log(`Wrote ${metaPath}`);
 
-  // Transform and write reviews.jsonl
+  // Transform and write reviews.json
   const entries = transform(data);
-  const reviewsPath = path.join(outputDir, "reviews.jsonl");
-  fs.writeFileSync(reviewsPath, toJsonl(entries));
+  const reviewsPath = path.join(outputDir, "reviews.json");
+  fs.writeFileSync(reviewsPath, toJson(entries));
   log(`Wrote ${reviewsPath} (${entries.length} entries)`);
 
   // Compute and display stats

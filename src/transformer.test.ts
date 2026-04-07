@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transform, toJsonl } from './transformer.js';
+import { transform, toJson } from './transformer.js';
 import type {
   FetchedData,
   ReviewThread,
@@ -161,8 +161,8 @@ describe('transform', () => {
   });
 });
 
-describe('toJsonl', () => {
-  it('converts entries to JSONL format', () => {
+describe('toJson', () => {
+  it('converts entries to JSON array format', () => {
     const entries: OutputEntry[] = [
       {
         id: '1',
@@ -185,15 +185,15 @@ describe('toJsonl', () => {
       },
     ];
 
-    const jsonl = toJsonl(entries);
-    const lines = jsonl.trim().split('\n');
+    const json = toJson(entries);
+    const parsed = JSON.parse(json);
 
-    expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0])).toEqual(entries[0]);
-    expect(JSON.parse(lines[1])).toEqual(entries[1]);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]).toEqual(entries[0]);
+    expect(parsed[1]).toEqual(entries[1]);
   });
 
-  it('returns empty string for empty array', () => {
-    expect(toJsonl([])).toBe('');
+  it('returns empty array for empty array', () => {
+    expect(toJson([])).toBe('[]');
   });
 });

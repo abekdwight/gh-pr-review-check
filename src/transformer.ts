@@ -154,8 +154,8 @@ export function transform(data: FetchedData): OutputEntry[] {
 }
 
 /**
- * Format entries as JSONL
+ * Format entries as JSON array
  */
-export function toJsonl(entries: OutputEntry[]): string {
-  return entries.map((e) => JSON.stringify(e)).join('\n');
+export function toJson(entries: OutputEntry[]): string {
+  return JSON.stringify(entries, null, 2);
 }

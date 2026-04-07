@@ -55,7 +55,7 @@ export interface ReviewComment {
   html_url: string;
 }
 
-// Output types (JSONL entries)
+// Output types (JSON array entries)
 
 export type ActionStatus = "pending" | "fix" | "skip" | "done";
 

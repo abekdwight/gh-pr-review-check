@@ -67,7 +67,7 @@ npm test         # テスト実行
 ```
 /tmp/{org}/{repo}/pr/{pr-id}/
 ├── pr-meta.json      # PRメタデータ
-└── reviews.jsonl     # レビューエントリ（1行1JSON）
+└── reviews.json      # レビューエントリ（JSON配列）
 ```
 
 ### JSONLエントリ型

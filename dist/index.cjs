@@ -3849,8 +3849,8 @@ function transform(data) {
   }
   return entries;
 }
-function toJsonl(entries) {
-  return entries.map((e) => JSON.stringify(e)).join("\n");
+function toJson(entries) {
+  return JSON.stringify(entries, null, 2);
 }
 
 // src/stats.ts
@@ -4392,8 +4392,8 @@ async function syncCommand(pr, options) {
   fs.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
   log(`Wrote ${metaPath}`);
   const entries = transform(data);
-  const reviewsPath = path.join(outputDir, "reviews.jsonl");
-  fs.writeFileSync(reviewsPath, toJsonl(entries));
+  const reviewsPath = path.join(outputDir, "reviews.json");
+  fs.writeFileSync(reviewsPath, toJson(entries));
   log(`Wrote ${reviewsPath} (${entries.length} entries)`);
   const stats = computeStats(data, entries);
   const manifest = computeCollectionManifest(data, entries, stats, signals);
