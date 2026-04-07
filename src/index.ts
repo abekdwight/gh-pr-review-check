@@ -370,6 +370,8 @@ program
     ) => {
       try {
         const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
+        // Always sync before rendering to ensure fresh data
+        syncCore(owner, repo, prNumber, options.output, true);
         viewCommand(owner, repo, prNumber, entryId, options);
       } catch (error) {
         const err = error as Error;
@@ -379,108 +381,69 @@ program
     },
   );
 
-async function syncCommand(
-  pr: string | undefined,
-  options: { output: string; repo?: string; json?: boolean; quiet?: boolean },
-): Promise<void> {
-  const log = options.quiet ? () => {} : console.error;
+interface SyncResult {
+  outputDir: string;
+  data: FetchedData;
+  entries: ReturnType<typeof transform>;
+  stats: ReturnType<typeof computeStats>;
+  manifest: ReturnType<typeof computeCollectionManifest>;
+  signals: CollectionSignals;
+}
 
-  // Determine owner, repo, prNumber
-  let owner: string;
-  let repo: string;
-  let prNumber: number;
-
-  if (pr) {
-    // Check if it's a URL
-    if (pr.startsWith("http") || pr.includes("github.com")) {
-      const parsed = parsePRUrl(pr);
-      owner = parsed.owner;
-      repo = parsed.repo;
-      prNumber = parsed.prNumber;
-    } else if (pr.includes("/")) {
-      // Format: OWNER/REPO/PR_NUMBER or OWNER/REPO#PR_NUMBER
-      const match = pr.match(/^([^/]+)\/([^/#]+)[#/]?(\d+)$/);
-      if (!match) {
-        throw new Error(`Invalid PR format: ${pr}`);
-      }
-      owner = match[1];
-      repo = match[2];
-      prNumber = parseInt(match[3], 10);
-    } else {
-      // Just a number - try to detect repo
-      let repoStr = options.repo;
-      if (!repoStr) {
-        const detected = detectRepo();
-        if (!detected) {
-          throw new Error(
-            "--repo is required when PR is just a number and no git repo detected",
-          );
-        }
-        owner = detected.owner;
-        repo = detected.repo;
-      } else {
-        const [o, r] = repoStr.split("/");
-        owner = o;
-        repo = r;
-      }
-      prNumber = parseInt(pr, 10);
-    }
-  } else {
-    // Try to get PR from current branch
-    const prUrl = execSync("gh pr view --json url -q .url", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    const parsed = parsePRUrl(prUrl);
-    owner = parsed.owner;
-    repo = parsed.repo;
-    prNumber = parsed.prNumber;
-  }
+function syncCore(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  outputBase: string,
+  quiet: boolean,
+): SyncResult {
+  const log = quiet ? () => {} : console.error;
 
   log(`Syncing PR #${prNumber} from ${owner}/${repo}...`);
 
-  // Create output directory
-  const outputDir = path.join(
-    options.output,
-    owner,
-    repo,
-    "pr",
-    prNumber.toString(),
-  );
+  const outputDir = path.join(outputBase, owner, repo, "pr", prNumber.toString());
   fs.mkdirSync(outputDir, { recursive: true });
 
-  // Fetch data with source-level completeness signals
-  const { data, signals } = collectDataWithSignals(
-    { owner, repo, prNumber },
-    options.quiet ?? false,
-  );
+  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, quiet);
 
-  // Write PR meta
   const metaPath = path.join(outputDir, "pr-meta.json");
   fs.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
   log(`Wrote ${metaPath}`);
 
-  // Transform and write reviews.json
   const entries = transform(data);
   const reviewsPath = path.join(outputDir, "reviews.json");
   fs.writeFileSync(reviewsPath, toJson(entries));
   log(`Wrote ${reviewsPath} (${entries.length} entries)`);
 
-  // Compute and display stats
   const stats = computeStats(data, entries);
   const manifest = computeCollectionManifest(data, entries, stats, signals);
   const manifestPath = path.join(outputDir, "collection-manifest.json");
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   log(`Wrote ${manifestPath}`);
 
+  return { outputDir, data, entries, stats, manifest, signals };
+}
+
+async function syncCommand(
+  pr: string | undefined,
+  options: { output: string; repo?: string; json?: boolean; quiet?: boolean },
+): Promise<void> {
+  const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
+  const { outputDir, stats, manifest } = syncCore(
+    owner,
+    repo,
+    prNumber,
+    options.output,
+    options.quiet ?? false,
+  );
+
   if (!options.quiet) {
-    log("");
-    log(formatSummary(stats));
-    log(`Completeness: ${manifest.completenessState}`);
-    log("");
+    console.error("");
+    console.error(formatSummary(stats));
+    console.error(`Completeness: ${manifest.completenessState}`);
+    console.error("");
   }
 
-  // Output result
   if (options.json) {
     console.log(
       JSON.stringify({

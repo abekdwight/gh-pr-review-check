@@ -72,6 +72,7 @@ export interface ThreadEntry extends BaseEntry {
   path: string | null;
   line: number | null;
   is_resolved: boolean;
+  parentReviewId?: string;
   comments: Array<{
     id: string;
     author: string | null;

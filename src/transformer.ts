@@ -99,6 +99,19 @@ export function transform(data: FetchedData): OutputEntry[] {
   const commentToThread = buildCommentToThreadMap(data.threads);
   const reviewToThreads = buildReviewToThreadsMap(data);
 
+  // Build thread → parent review GraphQL ID mapping
+  // (only for reviews that will appear in output)
+  const threadToParentReview = new Map<string, string>();
+  for (const review of data.reviews) {
+    if (review.state === 'COMMENTED' && !review.body?.trim()) continue;
+    if (review.databaseId == null) continue;
+    const associatedThreadIds = reviewToThreads.get(review.databaseId);
+    if (!associatedThreadIds) continue;
+    for (const tid of associatedThreadIds) {
+      threadToParentReview.set(tid, review.id);
+    }
+  }
+
   // 1. Review Threads (primary source for inline comments)
   const threadActions = new Map<string, ActionStatus>();
   for (const thread of data.threads) {
@@ -117,6 +130,7 @@ export function transform(data: FetchedData): OutputEntry[] {
 
     threadActions.set(thread.id, action);
 
+    const parentReviewId = threadToParentReview.get(thread.id);
     const entry: ThreadEntry = {
       id: thread.id,
       type: 'thread',
@@ -125,6 +139,7 @@ export function transform(data: FetchedData): OutputEntry[] {
       line: thread.line,
       is_resolved: thread.isResolved,
       action,
+      ...(parentReviewId ? { parentReviewId } : {}),
       comments: thread.comments.map((c) => ({
         id: c.id,
         author: c.author?.login || null,

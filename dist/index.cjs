@@ -3810,6 +3810,16 @@ function transform(data) {
   const entries = [];
   const commentToThread = buildCommentToThreadMap(data.threads);
   const reviewToThreads = buildReviewToThreadsMap(data);
+  const threadToParentReview = /* @__PURE__ */ new Map();
+  for (const review of data.reviews) {
+    if (review.state === "COMMENTED" && !review.body?.trim()) continue;
+    if (review.databaseId == null) continue;
+    const associatedThreadIds = reviewToThreads.get(review.databaseId);
+    if (!associatedThreadIds) continue;
+    for (const tid of associatedThreadIds) {
+      threadToParentReview.set(tid, review.id);
+    }
+  }
   const threadActions = /* @__PURE__ */ new Map();
   for (const thread of data.threads) {
     let action = "pending";
@@ -3823,6 +3833,7 @@ function transform(data) {
       }
     }
     threadActions.set(thread.id, action);
+    const parentReviewId = threadToParentReview.get(thread.id);
     const entry = {
       id: thread.id,
       type: "thread",
@@ -3832,6 +3843,7 @@ function transform(data) {
       line: thread.line,
       is_resolved: thread.isResolved,
       action,
+      ...parentReviewId ? { parentReviewId } : {},
       comments: thread.comments.map((c) => ({
         id: c.id,
         author: c.author?.login || null,
@@ -4854,7 +4866,8 @@ function renderList(entries, meta) {
   lines.push("");
   const counts = /* @__PURE__ */ new Map();
   for (const a of ACTION_ORDER) counts.set(a, 0);
-  for (const e of entries) counts.set(e.action, (counts.get(e.action) ?? 0) + 1);
+  for (const e of entries)
+    counts.set(e.action, (counts.get(e.action) ?? 0) + 1);
   const summary = ACTION_ORDER.map((a) => {
     const icon = actionIcon(a);
     const label = actionLabel(a);
@@ -4863,13 +4876,49 @@ function renderList(entries, meta) {
   }).join("    ");
   lines.push(`  ${summary}`);
   lines.push("");
+  const childThreadIds = /* @__PURE__ */ new Set();
+  const childrenByReview = /* @__PURE__ */ new Map();
+  for (const entry of entries) {
+    if (entry.type === "thread" && entry.parentReviewId) {
+      childThreadIds.add(entry.id);
+      const children = childrenByReview.get(entry.parentReviewId) ?? [];
+      children.push(entry);
+      childrenByReview.set(entry.parentReviewId, children);
+    }
+  }
+  const topLevel = entries.filter(
+    (e) => !childThreadIds.has(e.id)
+  );
   for (const action of ACTION_ORDER) {
-    const group = entries.filter((e) => e.action === action);
+    const group = topLevel.filter((e) => e.action === action);
     if (group.length === 0) continue;
-    lines.push(sectionHeader(action.charAt(0).toUpperCase() + action.slice(1), group.length));
+    let totalInGroup = 0;
+    for (const entry of group) {
+      totalInGroup += 1;
+      if (entry.type === "review") {
+        totalInGroup += (childrenByReview.get(entry.id) ?? []).length;
+      }
+    }
+    lines.push(
+      sectionHeader(
+        action.charAt(0).toUpperCase() + action.slice(1),
+        totalInGroup
+      )
+    );
     lines.push("");
     for (const entry of group) {
       lines.push(...renderEntryCard(entry));
+      if (entry.type === "review") {
+        const children = childrenByReview.get(entry.id) ?? [];
+        if (children.length > 0) {
+          const reviewBar = actionStyle(entry.action)("\u2503");
+          lines.push(`  ${reviewBar}`);
+          for (const child of children) {
+            lines.push(...renderThreadCardNested(child, entry.action));
+            lines.push(`  ${reviewBar}`);
+          }
+        }
+      }
       lines.push("");
     }
   }
@@ -4886,27 +4935,35 @@ function renderEntryCard(entry) {
   }
 }
 function renderThreadCard(entry) {
+  return renderThreadCardInner(entry, "  ");
+}
+function renderThreadCardNested(entry, parentAction) {
+  const reviewBar = actionStyle(parentAction)("\u2503");
+  const prefix = `  ${reviewBar}   `;
+  return renderThreadCardInner(entry, prefix);
+}
+function renderThreadCardInner(entry, prefix) {
   const lines = [];
   const color = actionStyle(entry.action);
   const bar = color("\u2503");
-  const header = `  ${typeLabel(entry.type)}  ${actionIcon(entry.action)} ${actionLabel(entry.action)}`;
+  const header = `${prefix}${typeLabel(entry.type)}  ${actionIcon(entry.action)} ${actionLabel(entry.action)}`;
   const id = source_default.dim(entry.id);
   lines.push(`${header}  ${id}`);
   if (entry.path) {
     const loc = entry.line ? `${entry.path}:${entry.line}` : entry.path;
-    lines.push(`  ${bar} ${source_default.underline.cyan(loc)}`);
+    lines.push(`${prefix}${bar} ${source_default.underline.cyan(loc)}`);
   }
   const firstComment = entry.comments[0];
   if (firstComment) {
     const author = firstComment.author ? source_default.bold(`@${firstComment.author}`) : source_default.dim("(unknown)");
     const date = formatDate(firstComment.created_at);
     const resolved = entry.is_resolved ? source_default.green(" \u2714 resolved") : "";
-    lines.push(`  ${bar} ${author}  ${date}${resolved}`);
+    lines.push(`${prefix}${bar} ${author}  ${date}${resolved}`);
   }
   if (firstComment) {
-    const summary = extractSummary(firstComment.body);
-    if (summary) {
-      lines.push(`  ${bar} ${summary}`);
+    const summaryText = extractSummary(firstComment.body);
+    if (summaryText) {
+      lines.push(`${prefix}${bar} ${summaryText}`);
     }
   }
   return lines;
@@ -4922,9 +4979,9 @@ function renderReviewCard(entry) {
   const state = reviewStateStyle(entry.state);
   lines.push(`  ${bar} ${author}  ${state}`);
   if (entry.body) {
-    const summary = extractSummary(entry.body);
-    if (summary) {
-      lines.push(`  ${bar} ${summary}`);
+    const summaryText = extractSummary(entry.body);
+    if (summaryText) {
+      lines.push(`  ${bar} ${summaryText}`);
     }
   }
   return lines;
@@ -4939,9 +4996,9 @@ function renderCommentCard(entry) {
   const author = entry.author ? source_default.bold(`@${entry.author}`) : source_default.dim("(unknown)");
   lines.push(`  ${bar} ${author}`);
   if (entry.body) {
-    const summary = extractSummary(entry.body);
-    if (summary) {
-      lines.push(`  ${bar} ${summary}`);
+    const summaryText = extractSummary(entry.body);
+    if (summaryText) {
+      lines.push(`  ${bar} ${summaryText}`);
     }
   }
   return lines;
@@ -5349,6 +5406,7 @@ program2.command("view [pr] [entry-id]").description("Display synced PR review d
   (pr, entryId, options) => {
     try {
       const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
+      syncCore(owner, repo, prNumber, options.output, true);
       viewCommand(owner, repo, prNumber, entryId, options);
     } catch (error) {
       const err = error;
@@ -5357,67 +5415,13 @@ program2.command("view [pr] [entry-id]").description("Display synced PR review d
     }
   }
 );
-async function syncCommand(pr, options) {
-  const log = options.quiet ? () => {
+function syncCore(owner, repo, prNumber, outputBase, quiet) {
+  const log = quiet ? () => {
   } : console.error;
-  let owner;
-  let repo;
-  let prNumber;
-  if (pr) {
-    if (pr.startsWith("http") || pr.includes("github.com")) {
-      const parsed = parsePRUrl(pr);
-      owner = parsed.owner;
-      repo = parsed.repo;
-      prNumber = parsed.prNumber;
-    } else if (pr.includes("/")) {
-      const match = pr.match(/^([^/]+)\/([^/#]+)[#/]?(\d+)$/);
-      if (!match) {
-        throw new Error(`Invalid PR format: ${pr}`);
-      }
-      owner = match[1];
-      repo = match[2];
-      prNumber = parseInt(match[3], 10);
-    } else {
-      let repoStr = options.repo;
-      if (!repoStr) {
-        const detected = detectRepo();
-        if (!detected) {
-          throw new Error(
-            "--repo is required when PR is just a number and no git repo detected"
-          );
-        }
-        owner = detected.owner;
-        repo = detected.repo;
-      } else {
-        const [o, r] = repoStr.split("/");
-        owner = o;
-        repo = r;
-      }
-      prNumber = parseInt(pr, 10);
-    }
-  } else {
-    const prUrl = (0, import_node_child_process3.execSync)("gh pr view --json url -q .url", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim();
-    const parsed = parsePRUrl(prUrl);
-    owner = parsed.owner;
-    repo = parsed.repo;
-    prNumber = parsed.prNumber;
-  }
   log(`Syncing PR #${prNumber} from ${owner}/${repo}...`);
-  const outputDir = path2.join(
-    options.output,
-    owner,
-    repo,
-    "pr",
-    prNumber.toString()
-  );
+  const outputDir = path2.join(outputBase, owner, repo, "pr", prNumber.toString());
   fs2.mkdirSync(outputDir, { recursive: true });
-  const { data, signals } = collectDataWithSignals(
-    { owner, repo, prNumber },
-    options.quiet ?? false
-  );
+  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, quiet);
   const metaPath = path2.join(outputDir, "pr-meta.json");
   fs2.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
   log(`Wrote ${metaPath}`);
@@ -5430,11 +5434,22 @@ async function syncCommand(pr, options) {
   const manifestPath = path2.join(outputDir, "collection-manifest.json");
   fs2.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   log(`Wrote ${manifestPath}`);
+  return { outputDir, data, entries, stats, manifest, signals };
+}
+async function syncCommand(pr, options) {
+  const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
+  const { outputDir, stats, manifest } = syncCore(
+    owner,
+    repo,
+    prNumber,
+    options.output,
+    options.quiet ?? false
+  );
   if (!options.quiet) {
-    log("");
-    log(formatSummary(stats));
-    log(`Completeness: ${manifest.completenessState}`);
-    log("");
+    console.error("");
+    console.error(formatSummary(stats));
+    console.error(`Completeness: ${manifest.completenessState}`);
+    console.error("");
   }
   if (options.json) {
     console.log(
