@@ -18,6 +18,7 @@ export interface ReviewThreadComment {
 
 export interface Review {
   id: string;
+  databaseId?: number;
   author: { login: string } | null;
   state:
     | "APPROVED"

@@ -3714,11 +3714,18 @@ function fetchReviewThreads(config) {
   return allThreads;
 }
 function fetchReviews(config) {
-  const json = runGh(
-    `pr view ${config.prNumber} --repo ${config.owner}/${config.repo} --json reviews`
+  const reviews = fetchPaginatedRestCollection(
+    `repos/${config.owner}/${config.repo}/pulls/${config.prNumber}/reviews`
   );
-  const data = JSON.parse(json);
-  return data.reviews || [];
+  return reviews.map((r) => ({
+    id: r.node_id,
+    databaseId: r.id,
+    author: r.user ? { login: r.user.login } : null,
+    state: r.state,
+    body: r.body || "",
+    commit: r.commit_id ? { oid: r.commit_id } : null,
+    submittedAt: r.submitted_at
+  }));
 }
 function fetchIssueComments(config) {
   const comments = fetchPaginatedRestCollection(
@@ -3778,9 +3785,32 @@ function getCommitForReviewComment(commentId, reviewComments) {
   const comment = reviewComments.find((c) => c.id === commentId);
   return comment?.commit_id || null;
 }
+function buildReviewToThreadsMap(data) {
+  const commentToThreadId = /* @__PURE__ */ new Map();
+  for (const thread of data.threads) {
+    for (const comment of thread.comments) {
+      commentToThreadId.set(comment.id, thread.id);
+    }
+  }
+  const map = /* @__PURE__ */ new Map();
+  for (const rc of data.reviewComments) {
+    if (rc.pull_request_review_id == null) continue;
+    const threadId = commentToThreadId.get(rc.node_id);
+    if (!threadId) continue;
+    let threads = map.get(rc.pull_request_review_id);
+    if (!threads) {
+      threads = /* @__PURE__ */ new Set();
+      map.set(rc.pull_request_review_id, threads);
+    }
+    threads.add(threadId);
+  }
+  return map;
+}
 function transform(data) {
   const entries = [];
   const commentToThread = buildCommentToThreadMap(data.threads);
+  const reviewToThreads = buildReviewToThreadsMap(data);
+  const threadActions = /* @__PURE__ */ new Map();
   for (const thread of data.threads) {
     let action = "pending";
     if (thread.isResolved) {
@@ -3792,6 +3822,7 @@ function transform(data) {
         action = reactionAction;
       }
     }
+    threadActions.set(thread.id, action);
     const entry = {
       id: thread.id,
       type: "thread",
@@ -3821,6 +3852,18 @@ function transform(data) {
     if (review.state === "COMMENTED" && !review.body?.trim()) {
       continue;
     }
+    let action = "pending";
+    if (review.databaseId != null) {
+      const associatedThreadIds = reviewToThreads.get(review.databaseId);
+      if (associatedThreadIds && associatedThreadIds.size > 0) {
+        const allDone = [...associatedThreadIds].every(
+          (tid) => threadActions.get(tid) === "done"
+        );
+        if (allDone) {
+          action = "done";
+        }
+      }
+    }
     const entry = {
       id: review.id,
       type: "review",
@@ -3828,7 +3871,7 @@ function transform(data) {
       author: review.author?.login || null,
       state: review.state,
       body: review.body || "",
-      action: "pending"
+      action
     };
     entries.push(entry);
   }

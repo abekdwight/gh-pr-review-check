@@ -362,12 +362,29 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
   return allThreads;
 }
 
+type RestReview = {
+  id: number;
+  node_id: string;
+  user: { login: string } | null;
+  body: string | null;
+  state: string;
+  commit_id: string | null;
+  submitted_at: string | null;
+};
+
 export function fetchReviews(config: SyncConfig): Review[] {
-  const json = runGh(
-    `pr view ${config.prNumber} --repo ${config.owner}/${config.repo} --json reviews`,
+  const reviews = fetchPaginatedRestCollection<RestReview>(
+    `repos/${config.owner}/${config.repo}/pulls/${config.prNumber}/reviews`,
   );
-  const data = JSON.parse(json);
-  return data.reviews || [];
+  return reviews.map((r) => ({
+    id: r.node_id,
+    databaseId: r.id,
+    author: r.user ? { login: r.user.login } : null,
+    state: r.state as Review["state"],
+    body: r.body || "",
+    commit: r.commit_id ? { oid: r.commit_id } : null,
+    submittedAt: r.submitted_at,
+  }));
 }
 
 export function fetchIssueComments(config: SyncConfig): IssueComment[] {

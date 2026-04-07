@@ -60,13 +60,47 @@ function getCommitForReviewComment(
 }
 
 /**
+ * Build a map from review database ID to associated thread IDs.
+ * Uses reviewComment.node_id (GraphQL ID) to match thread comments,
+ * and reviewComment.pull_request_review_id to group by review.
+ */
+function buildReviewToThreadsMap(
+  data: FetchedData,
+): Map<number, Set<string>> {
+  // Map: thread comment GraphQL ID → thread ID
+  const commentToThreadId = new Map<string, string>();
+  for (const thread of data.threads) {
+    for (const comment of thread.comments) {
+      commentToThreadId.set(comment.id, thread.id);
+    }
+  }
+
+  // Map: review database ID → set of thread IDs
+  const map = new Map<number, Set<string>>();
+  for (const rc of data.reviewComments) {
+    if (rc.pull_request_review_id == null) continue;
+    const threadId = commentToThreadId.get(rc.node_id);
+    if (!threadId) continue;
+    let threads = map.get(rc.pull_request_review_id);
+    if (!threads) {
+      threads = new Set();
+      map.set(rc.pull_request_review_id, threads);
+    }
+    threads.add(threadId);
+  }
+  return map;
+}
+
+/**
  * Transform fetched data to output entries
  */
 export function transform(data: FetchedData): OutputEntry[] {
   const entries: OutputEntry[] = [];
   const commentToThread = buildCommentToThreadMap(data.threads);
+  const reviewToThreads = buildReviewToThreadsMap(data);
 
   // 1. Review Threads (primary source for inline comments)
+  const threadActions = new Map<string, ActionStatus>();
   for (const thread of data.threads) {
     // Determine action: isResolved takes priority, then check reactions
     let action: ActionStatus = 'pending';
@@ -80,6 +114,8 @@ export function transform(data: FetchedData): OutputEntry[] {
         action = reactionAction;
       }
     }
+
+    threadActions.set(thread.id, action);
 
     const entry: ThreadEntry = {
       id: thread.id,
@@ -119,6 +155,20 @@ export function transform(data: FetchedData): OutputEntry[] {
       continue;
     }
 
+    // Derive action from associated threads
+    let action: ActionStatus = 'pending';
+    if (review.databaseId != null) {
+      const associatedThreadIds = reviewToThreads.get(review.databaseId);
+      if (associatedThreadIds && associatedThreadIds.size > 0) {
+        const allDone = [...associatedThreadIds].every(
+          (tid) => threadActions.get(tid) === 'done',
+        );
+        if (allDone) {
+          action = 'done';
+        }
+      }
+    }
+
     const entry: ReviewEntry = {
       id: review.id,
       type: 'review',
@@ -126,7 +176,7 @@ export function transform(data: FetchedData): OutputEntry[] {
       author: review.author?.login || null,
       state: review.state,
       body: review.body || '',
-      action: 'pending',
+      action,
     };
     entries.push(entry);
   }
