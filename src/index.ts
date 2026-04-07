@@ -19,6 +19,7 @@ import {
   formatSummary,
 } from "./stats.js";
 import { resolve, Status } from "./resolve.js";
+import { viewCommand } from "./viewer/index.js";
 import type {
   CollectionSignals,
   CompletenessState,
@@ -201,12 +202,51 @@ function detectRepo(): { owner: string; repo: string } | null {
   }
 }
 
+function resolvePRIdentifier(
+  pr: string | undefined,
+  repoOption?: string,
+): { owner: string; repo: string; prNumber: number } {
+  if (pr) {
+    if (pr.startsWith("http") || pr.includes("github.com")) {
+      return parsePRUrl(pr);
+    }
+    if (pr.includes("/")) {
+      const match = pr.match(/^([^/]+)\/([^/#]+)[#/]?(\d+)$/);
+      if (!match) {
+        throw new Error(`Invalid PR format: ${pr}`);
+      }
+      return { owner: match[1], repo: match[2], prNumber: parseInt(match[3], 10) };
+    }
+    // Just a number
+    let owner: string;
+    let repo: string;
+    if (repoOption) {
+      [owner, repo] = repoOption.split("/");
+    } else {
+      const detected = detectRepo();
+      if (!detected) {
+        throw new Error("--repo is required when PR is just a number and no git repo detected");
+      }
+      owner = detected.owner;
+      repo = detected.repo;
+    }
+    return { owner, repo, prNumber: parseInt(pr, 10) };
+  }
+  // Auto-detect from current branch
+  const prUrl = execSync("gh pr view --json url -q .url", {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+  return parsePRUrl(prUrl);
+}
+
 const program = new Command();
 
 program
   .name("gh-pr-review-check")
   .description("Sync PR review data for AI-assisted review handling")
-  .version("0.0.4");
+  .version("0.0.4")
+  .enablePositionalOptions();
 
 // Default command: sync
 program
@@ -292,6 +332,45 @@ program
           status,
           comment: options.comment,
         });
+      } catch (error) {
+        const err = error as Error;
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+    },
+  );
+
+// View command
+program
+  .command("view [pr] [entry-id]")
+  .description("Display synced PR review data in a human-readable format")
+  .option("-o, --output <dir>", "Output directory", "/tmp/github.com")
+  .option(
+    "-R, --repo <repo>",
+    "Repository in OWNER/REPO format (auto-detected from cwd)",
+  )
+  .option("-s, --status <status>", "Filter by action status (pending, fix, skip, done)")
+  .option("-t, --type <type>", "Filter by entry type (thread, review, issue_comment)")
+  .option("-a, --author <login>", "Filter by author login")
+  .option("--resolved", "Show only resolved threads")
+  .option("--unresolved", "Show only unresolved threads")
+  .action(
+    (
+      pr: string | undefined,
+      entryId: string | undefined,
+      options: {
+        output: string;
+        repo?: string;
+        status?: string;
+        type?: string;
+        author?: string;
+        resolved?: boolean;
+        unresolved?: boolean;
+      },
+    ) => {
+      try {
+        const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
+        viewCommand(owner, repo, prNumber, entryId, options);
       } catch (error) {
         const err = error as Error;
         console.error(`Error: ${err.message}`);
