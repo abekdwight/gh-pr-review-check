@@ -5165,6 +5165,35 @@ Run 'gh pr-review-check ${prNumber}' first to sync.`
   renderList(filtered, meta);
 }
 
+// src/viewer/spinner.ts
+var FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
+var INTERVAL = 80;
+function createSpinner() {
+  let frameIndex = 0;
+  let currentMsg = "";
+  let timer = null;
+  const render = () => {
+    const frame = source_default.cyan(FRAMES[frameIndex % FRAMES.length]);
+    process.stderr.write(`\r\x1B[K  ${frame} ${source_default.dim(currentMsg)}`);
+    frameIndex++;
+  };
+  const update = (msg) => {
+    currentMsg = msg;
+    if (!timer) {
+      timer = setInterval(render, INTERVAL);
+      render();
+    }
+  };
+  const stop = () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    process.stderr.write("\r\x1B[K");
+  };
+  return { update, stop };
+}
+
 // src/index.ts
 var GRAPHQL_INCONCLUSIVE_ERROR_NAMES = /* @__PURE__ */ new Set([
   "GRAPHQL_PARTIAL_DATA",
@@ -5236,9 +5265,7 @@ var markTrackedSourceFailure = (signals, sourceName, error) => {
     errors: [message]
   };
 };
-var collectDataWithSignals = (config, quiet) => {
-  const log = quiet ? () => {
-  } : console.error;
+var collectDataWithSignals = (config, log) => {
   const signals = createInitialCollectionSignals();
   log("Fetching PR metadata...");
   const meta = fetchPRMeta(config);
@@ -5404,46 +5431,48 @@ program2.command("view [pr] [entry-id]").description("Display synced PR review d
   "Repository in OWNER/REPO format (auto-detected from cwd)"
 ).option("-s, --status <status>", "Filter by action status (pending, fix, skip, done)").option("-t, --type <type>", "Filter by entry type (thread, review, issue_comment)").option("-a, --author <login>", "Filter by author login").option("--resolved", "Show only resolved threads").option("--unresolved", "Show only unresolved threads").action(
   (pr, entryId, options) => {
+    const spinner = createSpinner();
     try {
       const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
-      syncCore(owner, repo, prNumber, options.output, true);
+      syncCore(owner, repo, prNumber, options.output, (msg) => spinner.update(msg));
+      spinner.stop();
       viewCommand(owner, repo, prNumber, entryId, options);
     } catch (error) {
+      spinner.stop();
       const err = error;
       console.error(`Error: ${err.message}`);
       process.exit(1);
     }
   }
 );
-function syncCore(owner, repo, prNumber, outputBase, quiet) {
-  const log = quiet ? () => {
-  } : console.error;
+function syncCore(owner, repo, prNumber, outputBase, log = () => {
+}) {
   log(`Syncing PR #${prNumber} from ${owner}/${repo}...`);
   const outputDir = path2.join(outputBase, owner, repo, "pr", prNumber.toString());
   fs2.mkdirSync(outputDir, { recursive: true });
-  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, quiet);
+  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, log);
+  log("Writing files...");
   const metaPath = path2.join(outputDir, "pr-meta.json");
   fs2.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
-  log(`Wrote ${metaPath}`);
   const entries = transform(data);
   const reviewsPath = path2.join(outputDir, "reviews.json");
   fs2.writeFileSync(reviewsPath, toJson(entries));
-  log(`Wrote ${reviewsPath} (${entries.length} entries)`);
   const stats = computeStats(data, entries);
   const manifest = computeCollectionManifest(data, entries, stats, signals);
   const manifestPath = path2.join(outputDir, "collection-manifest.json");
   fs2.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-  log(`Wrote ${manifestPath}`);
   return { outputDir, data, entries, stats, manifest, signals };
 }
 async function syncCommand(pr, options) {
   const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
+  const log = options.quiet ? () => {
+  } : console.error;
   const { outputDir, stats, manifest } = syncCore(
     owner,
     repo,
     prNumber,
     options.output,
-    options.quiet ?? false
+    log
   );
   if (!options.quiet) {
     console.error("");

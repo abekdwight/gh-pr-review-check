@@ -20,6 +20,7 @@ import {
 } from "./stats.js";
 import { resolve, Status } from "./resolve.js";
 import { viewCommand } from "./viewer/index.js";
+import { createSpinner } from "./viewer/spinner.js";
 import type {
   CollectionSignals,
   CompletenessState,
@@ -124,12 +125,11 @@ const markTrackedSourceFailure = (
 
 const collectDataWithSignals = (
   config: SyncConfig,
-  quiet: boolean,
+  log: (msg: string) => void,
 ): {
   data: FetchedData;
   signals: CollectionSignals;
 } => {
-  const log = quiet ? () => {} : console.error;
   const signals = createInitialCollectionSignals();
 
   log("Fetching PR metadata...");
@@ -368,12 +368,15 @@ program
         unresolved?: boolean;
       },
     ) => {
+      const spinner = createSpinner();
       try {
         const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
         // Always sync before rendering to ensure fresh data
-        syncCore(owner, repo, prNumber, options.output, true);
+        syncCore(owner, repo, prNumber, options.output, (msg) => spinner.update(msg));
+        spinner.stop();
         viewCommand(owner, repo, prNumber, entryId, options);
       } catch (error) {
+        spinner.stop();
         const err = error as Error;
         console.error(`Error: ${err.message}`);
         process.exit(1);
@@ -395,31 +398,27 @@ function syncCore(
   repo: string,
   prNumber: number,
   outputBase: string,
-  quiet: boolean,
+  log: (msg: string) => void = () => {},
 ): SyncResult {
-  const log = quiet ? () => {} : console.error;
-
   log(`Syncing PR #${prNumber} from ${owner}/${repo}...`);
 
   const outputDir = path.join(outputBase, owner, repo, "pr", prNumber.toString());
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, quiet);
+  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, log);
 
+  log("Writing files...");
   const metaPath = path.join(outputDir, "pr-meta.json");
   fs.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
-  log(`Wrote ${metaPath}`);
 
   const entries = transform(data);
   const reviewsPath = path.join(outputDir, "reviews.json");
   fs.writeFileSync(reviewsPath, toJson(entries));
-  log(`Wrote ${reviewsPath} (${entries.length} entries)`);
 
   const stats = computeStats(data, entries);
   const manifest = computeCollectionManifest(data, entries, stats, signals);
   const manifestPath = path.join(outputDir, "collection-manifest.json");
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-  log(`Wrote ${manifestPath}`);
 
   return { outputDir, data, entries, stats, manifest, signals };
 }
@@ -429,12 +428,13 @@ async function syncCommand(
   options: { output: string; repo?: string; json?: boolean; quiet?: boolean },
 ): Promise<void> {
   const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
+  const log = options.quiet ? () => {} : console.error;
   const { outputDir, stats, manifest } = syncCore(
     owner,
     repo,
     prNumber,
     options.output,
-    options.quiet ?? false,
+    log,
   );
 
   if (!options.quiet) {
