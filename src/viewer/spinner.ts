@@ -1,42 +1,24 @@
 import chalk from "chalk";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const INTERVAL = 80;
 
 export interface Spinner {
-  /** Update the spinner message (does not print a new line). */
+  /** Update the message and advance the spinner frame. */
   update: (msg: string) => void;
-  /** Stop the spinner and clear the line. */
+  /** Clear the spinner line. */
   stop: () => void;
 }
 
 export function createSpinner(): Spinner {
   let frameIndex = 0;
-  let currentMsg = "";
-  let timer: ReturnType<typeof setInterval> | null = null;
 
-  const render = () => {
-    const frame = chalk.cyan(FRAMES[frameIndex % FRAMES.length]);
-    process.stderr.write(`\r\x1b[K  ${frame} ${chalk.dim(currentMsg)}`);
-    frameIndex++;
+  return {
+    update(msg: string) {
+      const frame = chalk.cyan(FRAMES[frameIndex++ % FRAMES.length]);
+      process.stderr.write(`\r\x1b[K  ${frame} ${chalk.dim(msg)}`);
+    },
+    stop() {
+      process.stderr.write("\r\x1b[K");
+    },
   };
-
-  const update = (msg: string) => {
-    currentMsg = msg;
-    if (!timer) {
-      timer = setInterval(render, INTERVAL);
-      render();
-    }
-  };
-
-  const stop = () => {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-    // Clear the spinner line
-    process.stderr.write("\r\x1b[K");
-  };
-
-  return { update, stop };
 }

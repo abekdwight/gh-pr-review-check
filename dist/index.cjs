@@ -5167,31 +5167,17 @@ Run 'gh pr-review-check ${prNumber}' first to sync.`
 
 // src/viewer/spinner.ts
 var FRAMES = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
-var INTERVAL = 80;
 function createSpinner() {
   let frameIndex = 0;
-  let currentMsg = "";
-  let timer = null;
-  const render = () => {
-    const frame = source_default.cyan(FRAMES[frameIndex % FRAMES.length]);
-    process.stderr.write(`\r\x1B[K  ${frame} ${source_default.dim(currentMsg)}`);
-    frameIndex++;
-  };
-  const update = (msg) => {
-    currentMsg = msg;
-    if (!timer) {
-      timer = setInterval(render, INTERVAL);
-      render();
+  return {
+    update(msg) {
+      const frame = source_default.cyan(FRAMES[frameIndex++ % FRAMES.length]);
+      process.stderr.write(`\r\x1B[K  ${frame} ${source_default.dim(msg)}`);
+    },
+    stop() {
+      process.stderr.write("\r\x1B[K");
     }
   };
-  const stop = () => {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-    process.stderr.write("\r\x1B[K");
-  };
-  return { update, stop };
 }
 
 // src/index.ts
