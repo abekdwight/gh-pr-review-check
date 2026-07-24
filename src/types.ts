@@ -14,6 +14,7 @@ export interface ReviewThreadComment {
   author: { login: string } | null;
   createdAt: string;
   reactions?: { nodes: Array<{ content: string }> };
+  pullRequestReview?: { state: string } | null;
 }
 
 export interface Review {
@@ -126,7 +127,36 @@ export interface FetchedData {
   reviewComments: ReviewComment[];
 }
 
+export interface ReviewThreadsResult {
+  threads: ReviewThread[];
+  // totalCount reported by the GraphQL reviewThreads connection (null when unavailable)
+  totalCount: number | null;
+}
+
 export type CompletenessState = "complete" | "incomplete" | "inconclusive";
+
+// Cross-source reconciliation: REST review comments vs GraphQL threaded comments.
+// Both APIs expose the same comment population under the same node ID scheme
+// (PRRC_*), so any asymmetry means one transport is lagging or dropped data.
+export interface ReconciliationResult {
+  restReviewCommentCount: number;
+  threadedReviewCommentCount: number;
+  // REST comment node IDs with no matching comment in any collected thread
+  missingFromThreads: string[];
+  // threaded comment IDs with no matching REST review comment
+  missingFromRest: string[];
+  reviewThreadsTotalCount: number | null;
+  collectedReviewThreads: number;
+  totalCountMatches: boolean | null;
+  consistent: boolean;
+}
+
+export interface ConsistencySignal {
+  // false when a prerequisite source failed and reconciliation could not run
+  checked: boolean;
+  retries: number;
+  result: ReconciliationResult | null;
+}
 
 export interface CollectionSourceSignal {
   exhausted: boolean;
@@ -144,6 +174,7 @@ export interface CollectionSignals {
     issueComments: CollectionSourceSignal;
     reviewComments: CollectionSourceSignal;
   };
+  consistency: ConsistencySignal;
 }
 
 export interface CollectionManifestSource {
@@ -161,9 +192,24 @@ export interface CollectionManifest {
     issueComments: number;
     reviewsRaw: number;
     reviewThreads: number;
+    // review comments as reported by the REST API
     reviewComments: number;
+    // review comments actually materialized inside collected threads
+    threadedReviewComments: number;
     totalEntries: number;
     pendingEntries: number;
+  };
+  consistency: {
+    checked: boolean;
+    consistent: boolean | null;
+    retries: number;
+    restReviewComments: number | null;
+    threadedReviewComments: number | null;
+    missingFromThreads: string[];
+    missingFromRest: string[];
+    reviewThreadsTotalCount: number | null;
+    collectedReviewThreads: number | null;
+    totalCountMatches: boolean | null;
   };
   sources: {
     reviewThreads: CollectionManifestSource;

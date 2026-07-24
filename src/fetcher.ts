@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import type {
   ReviewThread,
+  ReviewThreadsResult,
   Review,
   IssueComment,
   ReviewComment,
@@ -43,6 +44,7 @@ type GraphQLThreadComment = {
   author: { login: string } | null;
   createdAt: string;
   reactions?: { nodes: Array<{ content: string }> };
+  pullRequestReview?: { state: string } | null;
 };
 
 type GraphQLThreadCommentsConnection = {
@@ -61,6 +63,7 @@ type GraphQLReviewThread = {
 type GraphQLReviewThreadsConnection = {
   nodes: GraphQLReviewThread[];
   pageInfo: GraphQLPageInfo;
+  totalCount?: number;
 };
 
 type GraphQLReviewThreadsData = {
@@ -200,12 +203,13 @@ export function fetchPRMeta(config: SyncConfig): PRMeta {
   return JSON.parse(json);
 }
 
-export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
+export function fetchReviewThreads(config: SyncConfig): ReviewThreadsResult {
   const reviewThreadsQuery = `
     query($owner: String!, $repo: String!, $number: Int!, $threadsAfter: String) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
           reviewThreads(first: 100, after: $threadsAfter) {
+            totalCount
             nodes {
               id
               isResolved
@@ -217,6 +221,7 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
                   body
                   author { login }
                   createdAt
+                  pullRequestReview { state }
                   reactions(first: 20) {
                     nodes {
                       content
@@ -249,6 +254,7 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
               body
               author { login }
               createdAt
+              pullRequestReview { state }
               reactions(first: 20) {
                 nodes {
                   content
@@ -266,6 +272,7 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
   `;
 
   const allThreads: ReviewThread[] = [];
+  let totalCount: number | null = null;
   let threadsAfter: string | undefined;
 
   while (true) {
@@ -290,6 +297,10 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
         "GRAPHQL_INVALID_SHAPE",
         "reviewThreads response did not include nodes",
       );
+    }
+
+    if (typeof reviewThreadsConnection.totalCount === "number") {
+      totalCount = reviewThreadsConnection.totalCount;
     }
 
     for (const thread of reviewThreadsConnection.nodes) {
@@ -359,7 +370,7 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThread[] {
     threadsAfter = nextThreadsCursor;
   }
 
-  return allThreads;
+  return { threads: allThreads, totalCount };
 }
 
 type RestReview = {
@@ -428,7 +439,7 @@ export function fetchAll(
   const meta = fetchPRMeta(config);
 
   log("Fetching review threads...");
-  const threads = fetchReviewThreads(config);
+  const { threads } = fetchReviewThreads(config);
 
   log("Fetching reviews...");
   const reviews = fetchReviews(config);

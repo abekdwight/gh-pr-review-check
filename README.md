@@ -64,7 +64,19 @@ The command creates three output files (the artifact trio):
 {
   "completenessState": "complete" | "incomplete" | "inconclusive",
   "fallbackUsed": false,
-  "counts": { ... },
+  "counts": { ..., "reviewComments": 283, "threadedReviewComments": 283 },
+  "consistency": {
+    "checked": true,
+    "consistent": true,
+    "retries": 0,
+    "restReviewComments": 283,
+    "threadedReviewComments": 283,
+    "missingFromThreads": [],
+    "missingFromRest": [],
+    "reviewThreadsTotalCount": 131,
+    "collectedReviewThreads": 131,
+    "totalCountMatches": true
+  },
   "sources": {
     "reviewThreads": { "exhausted": true, "state": "complete", "warnings": [], "errors": [] },
     "issueComments": { "exhausted": true, "state": "complete", "warnings": [], "errors": [] },
@@ -76,6 +88,22 @@ The command creates three output files (the artifact trio):
 ```
 
 **Important**: Always check `completenessState` before treating `reviews.json` as a complete dataset. When `completenessState` is not `"complete"`, the data may be partial due to API errors, pagination failures, or source inconsistencies.
+
+### Completeness Is a Verified Claim
+
+`completenessState: "complete"` means more than "no fetch errors". The sync
+cross-checks the two independent transports that observe the same review
+comment population — the REST comment list (`pulls/{n}/comments`) and the
+comments materialized inside GraphQL `reviewThreads` — by node ID
+(`PRRC_*`), in both directions, plus the GraphQL `totalCount` against the
+number of collected threads. GitHub's GraphQL connection can lag REST by
+tens of seconds after a review lands; on a mismatch the sync retries with
+bounded backoff (5s/15s/45s), and if the transports still disagree it
+reports `inconclusive` with the missing comment IDs enumerated in
+`consistency.missingFromThreads` / `consistency.missingFromRest` instead of
+silently claiming completeness. Comments belonging to the viewer's own
+PENDING (draft) review are excluded from the check because REST never
+returns them.
 
 ### reviews.json Format
 

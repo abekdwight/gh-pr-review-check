@@ -18,6 +18,7 @@ import {
   computeStats,
   formatSummary,
 } from "./stats.js";
+import { reconcile } from "./reconcile.js";
 import { resolve, Status } from "./resolve.js";
 import { viewCommand } from "./viewer/index.js";
 import { createSpinner } from "./viewer/spinner.js";
@@ -34,6 +35,16 @@ const GRAPHQL_INCONCLUSIVE_ERROR_NAMES = new Set([
   "GRAPHQL_PARTIAL_DATA",
   "GRAPHQL_INVALID_PAGE_INFO",
 ]);
+
+// GitHub's GraphQL reviewThreads connection can lag the REST comment list by
+// tens of seconds after a review batch lands (observed in production as REST
+// returning comments whose threads were absent from GraphQL). The bounded
+// backoff below (65s total) absorbs typical propagation windows; anything
+// longer is reported as inconclusive instead of being silently accepted.
+const RECONCILE_RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
 const createInitialCollectionSignals = (): CollectionSignals => ({
   fallbackUsed: false,
@@ -58,6 +69,11 @@ const createInitialCollectionSignals = (): CollectionSignals => ({
       warnings: [],
       errors: [],
     },
+  },
+  consistency: {
+    checked: false,
+    retries: 0,
+    result: null,
   },
 });
 
@@ -123,22 +139,25 @@ const markTrackedSourceFailure = (
   };
 };
 
-const collectDataWithSignals = (
+const collectDataWithSignals = async (
   config: SyncConfig,
   log: (msg: string) => void,
-): {
+): Promise<{
   data: FetchedData;
   signals: CollectionSignals;
-} => {
+}> => {
   const signals = createInitialCollectionSignals();
 
   log("Fetching PR metadata...");
   const meta = fetchPRMeta(config);
 
   let threads = [] as FetchedData["threads"];
+  let threadsTotalCount: number | null = null;
   log("Fetching review threads...");
   try {
-    threads = fetchReviewThreads(config);
+    const threadsResult = fetchReviewThreads(config);
+    threads = threadsResult.threads;
+    threadsTotalCount = threadsResult.totalCount;
     markTrackedSourceSuccess(signals, "reviewThreads");
   } catch (error) {
     markTrackedSourceFailure(signals, "reviewThreads", error);
@@ -172,6 +191,61 @@ const collectDataWithSignals = (
     markTrackedSourceSuccess(signals, "reviewComments");
   } catch (error) {
     markTrackedSourceFailure(signals, "reviewComments", error);
+  }
+
+  // Cross-source consistency gate: both transports observe the same review
+  // comment population, so completeness can only be claimed when they agree.
+  // The check is meaningful only when both finished their pagination.
+  if (
+    signals.sources.reviewThreads.exhausted &&
+    signals.sources.reviewComments.exhausted
+  ) {
+    let result = reconcile({ threads, reviewComments }, threadsTotalCount);
+    let retries = 0;
+
+    for (const delayMs of RECONCILE_RETRY_DELAYS_MS) {
+      if (result.consistent) break;
+      retries += 1;
+      log(
+        `Cross-source mismatch detected (REST ${result.restReviewCommentCount} vs threaded ${result.threadedReviewCommentCount}); retrying in ${delayMs / 1000}s (${retries}/${RECONCILE_RETRY_DELAYS_MS.length})...`,
+      );
+      await sleep(delayMs);
+      try {
+        const threadsResult = fetchReviewThreads(config);
+        threads = threadsResult.threads;
+        threadsTotalCount = threadsResult.totalCount;
+        reviewComments = fetchReviewComments(config);
+      } catch (error) {
+        signals.warnings.push(
+          `[consistency] refetch during reconciliation failed: ${toErrorMessage(error)}`,
+        );
+        break;
+      }
+      result = reconcile({ threads, reviewComments }, threadsTotalCount);
+    }
+
+    signals.consistency = { checked: true, retries, result };
+
+    if (!result.consistent) {
+      // The transports still disagree; neither can be proven authoritative,
+      // so the thread source is downgraded and completeness becomes
+      // inconclusive instead of a false "complete".
+      signals.sources.reviewThreads.state = "inconclusive";
+      const detail = [
+        `REST review comments: ${result.restReviewCommentCount}`,
+        `threaded review comments: ${result.threadedReviewCommentCount}`,
+        `missingFromThreads: ${result.missingFromThreads.length}`,
+        `missingFromRest: ${result.missingFromRest.length}`,
+        ...(result.totalCountMatches === false
+          ? [
+              `reviewThreads totalCount ${result.reviewThreadsTotalCount} != collected ${result.collectedReviewThreads}`,
+            ]
+          : []),
+      ].join(", ");
+      signals.warnings.push(
+        `[consistency] cross-source reconciliation failed after ${retries} retries (${detail})`,
+      );
+    }
   }
 
   return {
@@ -245,7 +319,7 @@ const program = new Command();
 program
   .name("gh-pr-review-check")
   .description("Sync PR review data for AI-assisted review handling")
-  .version("0.0.4")
+  .version("0.0.5")
   .enablePositionalOptions();
 
 // Default command: sync
@@ -355,7 +429,7 @@ program
   .option("--resolved", "Show only resolved threads")
   .option("--unresolved", "Show only unresolved threads")
   .action(
-    (
+    async (
       pr: string | undefined,
       entryId: string | undefined,
       options: {
@@ -372,7 +446,7 @@ program
       try {
         const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
         // Always sync before rendering to ensure fresh data
-        syncCore(owner, repo, prNumber, options.output, (msg) => spinner.update(msg));
+        await syncCore(owner, repo, prNumber, options.output, (msg) => spinner.update(msg));
         spinner.stop();
         viewCommand(owner, repo, prNumber, entryId, options);
       } catch (error) {
@@ -393,19 +467,22 @@ interface SyncResult {
   signals: CollectionSignals;
 }
 
-function syncCore(
+async function syncCore(
   owner: string,
   repo: string,
   prNumber: number,
   outputBase: string,
   log: (msg: string) => void = () => {},
-): SyncResult {
+): Promise<SyncResult> {
   log(`Syncing PR #${prNumber} from ${owner}/${repo}...`);
 
   const outputDir = path.join(outputBase, owner, repo, "pr", prNumber.toString());
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, log);
+  const { data, signals } = await collectDataWithSignals(
+    { owner, repo, prNumber },
+    log,
+  );
 
   log("Writing files...");
   const metaPath = path.join(outputDir, "pr-meta.json");
@@ -429,7 +506,7 @@ async function syncCommand(
 ): Promise<void> {
   const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
   const log = options.quiet ? () => {} : console.error;
-  const { outputDir, stats, manifest } = syncCore(
+  const { outputDir, stats, manifest } = await syncCore(
     owner,
     repo,
     prNumber,
@@ -441,6 +518,12 @@ async function syncCommand(
     console.error("");
     console.error(formatSummary(stats));
     console.error(`Completeness: ${manifest.completenessState}`);
+    if (manifest.warnings.length > 0) {
+      console.error("Warnings:");
+      for (const warning of manifest.warnings) {
+        console.error(`  - ${warning}`);
+      }
+    }
     console.error("");
   }
 
@@ -459,6 +542,7 @@ async function syncCommand(
         threadsUnresolved: stats.threadsUnresolved,
         reviewsFiltered: stats.reviewsFiltered,
         reviewComments: stats.reviewComments,
+        restReviewComments: stats.restReviewComments,
         threadRoots: stats.threadRoots,
         threadReplies: stats.threadReplies,
         totalEntries: stats.totalEntries,
@@ -466,6 +550,7 @@ async function syncCommand(
         warnings: stats.warnings,
         completenessState: manifest.completenessState,
         fallbackUsed: manifest.fallbackUsed,
+        consistency: manifest.consistency,
         manifestWarnings: manifest.warnings,
         manifestErrors: manifest.errors,
       }),
