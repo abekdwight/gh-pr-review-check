@@ -3577,6 +3577,7 @@ function fetchReviewThreads(config) {
       repository(owner: $owner, name: $repo) {
         pullRequest(number: $number) {
           reviewThreads(first: 100, after: $threadsAfter) {
+            totalCount
             nodes {
               id
               isResolved
@@ -3588,6 +3589,7 @@ function fetchReviewThreads(config) {
                   body
                   author { login }
                   createdAt
+                  pullRequestReview { state }
                   reactions(first: 20) {
                     nodes {
                       content
@@ -3619,6 +3621,7 @@ function fetchReviewThreads(config) {
               body
               author { login }
               createdAt
+              pullRequestReview { state }
               reactions(first: 20) {
                 nodes {
                   content
@@ -3635,6 +3638,7 @@ function fetchReviewThreads(config) {
     }
   `;
   const allThreads = [];
+  let totalCount = null;
   let threadsAfter;
   while (true) {
     const result = runGhApiGraphQL(reviewThreadsQuery, {
@@ -3653,6 +3657,9 @@ function fetchReviewThreads(config) {
         "GRAPHQL_INVALID_SHAPE",
         "reviewThreads response did not include nodes"
       );
+    }
+    if (typeof reviewThreadsConnection.totalCount === "number") {
+      totalCount = reviewThreadsConnection.totalCount;
     }
     for (const thread of reviewThreadsConnection.nodes) {
       if (!thread.comments || !Array.isArray(thread.comments.nodes)) {
@@ -3711,7 +3718,7 @@ function fetchReviewThreads(config) {
     }
     threadsAfter = nextThreadsCursor;
   }
-  return allThreads;
+  return { threads: allThreads, totalCount };
 }
 function fetchReviews(config) {
   const reviews = fetchPaginatedRestCollection(
@@ -3917,7 +3924,7 @@ var uniqueMessages = (messages) => {
     new Set(messages.filter((message) => message.trim().length > 0))
   );
 };
-var deriveCompletenessState = (sources, warnings, errors) => {
+var deriveCompletenessState = (sources, consistency, warnings, errors) => {
   const sourceList = Object.values(sources);
   if (sourceList.some((source) => source.state === "inconclusive")) {
     return "inconclusive";
@@ -3927,6 +3934,9 @@ var deriveCompletenessState = (sources, warnings, errors) => {
   }
   if (sourceList.some((source) => source.state === "incomplete")) {
     return "incomplete";
+  }
+  if (!consistency.checked || consistency.result?.consistent !== true) {
+    return "inconclusive";
   }
   if (warnings.length > 0 || errors.length > 0) {
     return "incomplete";
@@ -3948,6 +3958,7 @@ function computeStats(data, entries) {
     (sum, t) => sum + t.comments.length,
     0
   );
+  const restReviewComments = data.reviewComments.length;
   const threadRoots = reviewThreads;
   const threadReplies = reviewComments - threadRoots;
   const totalEntries = entries.length;
@@ -3972,6 +3983,7 @@ function computeStats(data, entries) {
     threadsUnresolved,
     reviewsFiltered,
     reviewComments,
+    restReviewComments,
     threadRoots,
     threadReplies,
     totalEntries,
@@ -3991,7 +4003,7 @@ function formatSummary(stats) {
   lines.push("");
   lines.push(`Reviews (filtered): ${stats.reviewsFiltered}`);
   lines.push(
-    `Review Comments: ${stats.reviewComments} (thread roots: ${stats.threadRoots}, replies: ${stats.threadReplies})`
+    `Review Comments: ${stats.reviewComments} threaded / ${stats.restReviewComments} REST (thread roots: ${stats.threadRoots}, replies: ${stats.threadReplies})`
   );
   lines.push("");
   lines.push(
@@ -4043,20 +4055,68 @@ function computeCollectionManifest(data, entries, stats, signals) {
     ...toSourceMessages("issueComments", sources.issueComments.errors),
     ...toSourceMessages("reviewComments", sources.reviewComments.errors)
   ]);
+  const consistencyResult = signals.consistency.result;
+  const consistency = {
+    checked: signals.consistency.checked,
+    consistent: consistencyResult ? consistencyResult.consistent : null,
+    retries: signals.consistency.retries,
+    restReviewComments: consistencyResult ? consistencyResult.restReviewCommentCount : null,
+    threadedReviewComments: consistencyResult ? consistencyResult.threadedReviewCommentCount : null,
+    missingFromThreads: consistencyResult ? consistencyResult.missingFromThreads : [],
+    missingFromRest: consistencyResult ? consistencyResult.missingFromRest : [],
+    reviewThreadsTotalCount: consistencyResult ? consistencyResult.reviewThreadsTotalCount : null,
+    collectedReviewThreads: consistencyResult ? consistencyResult.collectedReviewThreads : null,
+    totalCountMatches: consistencyResult ? consistencyResult.totalCountMatches : null
+  };
   return {
-    completenessState: deriveCompletenessState(sources, warnings, errors),
+    completenessState: deriveCompletenessState(
+      sources,
+      signals.consistency,
+      warnings,
+      errors
+    ),
     fallbackUsed: signals.fallbackUsed,
     counts: {
       issueComments: data.issueComments.length,
       reviewsRaw: data.reviews.length,
       reviewThreads: data.threads.length,
       reviewComments: data.reviewComments.length,
+      threadedReviewComments: stats.reviewComments,
       totalEntries: entries.length,
       pendingEntries: stats.pendingEntries
     },
+    consistency,
     sources,
     warnings,
     errors
+  };
+}
+
+// src/reconcile.ts
+var isPendingReviewComment = (comment) => comment.pullRequestReview?.state === "PENDING";
+function reconcile(data, reviewThreadsTotalCount) {
+  const threadedIds = /* @__PURE__ */ new Set();
+  for (const thread of data.threads) {
+    for (const comment of thread.comments) {
+      if (!isPendingReviewComment(comment)) {
+        threadedIds.add(comment.id);
+      }
+    }
+  }
+  const restIds = new Set(data.reviewComments.map((c) => c.node_id));
+  const missingFromThreads = [...restIds].filter((id) => !threadedIds.has(id)).sort();
+  const missingFromRest = [...threadedIds].filter((id) => !restIds.has(id)).sort();
+  const collectedReviewThreads = data.threads.length;
+  const totalCountMatches = reviewThreadsTotalCount === null ? null : reviewThreadsTotalCount === collectedReviewThreads;
+  return {
+    restReviewCommentCount: restIds.size,
+    threadedReviewCommentCount: threadedIds.size,
+    missingFromThreads,
+    missingFromRest,
+    reviewThreadsTotalCount,
+    collectedReviewThreads,
+    totalCountMatches,
+    consistent: missingFromThreads.length === 0 && missingFromRest.length === 0 && totalCountMatches !== false
   };
 }
 
@@ -5185,6 +5245,8 @@ var GRAPHQL_INCONCLUSIVE_ERROR_NAMES = /* @__PURE__ */ new Set([
   "GRAPHQL_PARTIAL_DATA",
   "GRAPHQL_INVALID_PAGE_INFO"
 ]);
+var RECONCILE_RETRY_DELAYS_MS = [5e3, 15e3, 45e3];
+var sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 var createInitialCollectionSignals = () => ({
   fallbackUsed: false,
   warnings: [],
@@ -5208,6 +5270,11 @@ var createInitialCollectionSignals = () => ({
       warnings: [],
       errors: []
     }
+  },
+  consistency: {
+    checked: false,
+    retries: 0,
+    result: null
   }
 });
 var toErrorMessage = (error) => {
@@ -5251,14 +5318,17 @@ var markTrackedSourceFailure = (signals, sourceName, error) => {
     errors: [message]
   };
 };
-var collectDataWithSignals = (config, log) => {
+var collectDataWithSignals = async (config, log) => {
   const signals = createInitialCollectionSignals();
   log("Fetching PR metadata...");
   const meta = fetchPRMeta(config);
   let threads = [];
+  let threadsTotalCount = null;
   log("Fetching review threads...");
   try {
-    threads = fetchReviewThreads(config);
+    const threadsResult = fetchReviewThreads(config);
+    threads = threadsResult.threads;
+    threadsTotalCount = threadsResult.totalCount;
     markTrackedSourceSuccess(signals, "reviewThreads");
   } catch (error) {
     markTrackedSourceFailure(signals, "reviewThreads", error);
@@ -5289,6 +5359,46 @@ var collectDataWithSignals = (config, log) => {
     markTrackedSourceSuccess(signals, "reviewComments");
   } catch (error) {
     markTrackedSourceFailure(signals, "reviewComments", error);
+  }
+  if (signals.sources.reviewThreads.exhausted && signals.sources.reviewComments.exhausted) {
+    let result = reconcile({ threads, reviewComments }, threadsTotalCount);
+    let retries = 0;
+    for (const delayMs of RECONCILE_RETRY_DELAYS_MS) {
+      if (result.consistent) break;
+      retries += 1;
+      log(
+        `Cross-source mismatch detected (REST ${result.restReviewCommentCount} vs threaded ${result.threadedReviewCommentCount}); retrying in ${delayMs / 1e3}s (${retries}/${RECONCILE_RETRY_DELAYS_MS.length})...`
+      );
+      await sleep(delayMs);
+      try {
+        const threadsResult = fetchReviewThreads(config);
+        threads = threadsResult.threads;
+        threadsTotalCount = threadsResult.totalCount;
+        reviewComments = fetchReviewComments(config);
+      } catch (error) {
+        signals.warnings.push(
+          `[consistency] refetch during reconciliation failed: ${toErrorMessage(error)}`
+        );
+        break;
+      }
+      result = reconcile({ threads, reviewComments }, threadsTotalCount);
+    }
+    signals.consistency = { checked: true, retries, result };
+    if (!result.consistent) {
+      signals.sources.reviewThreads.state = "inconclusive";
+      const detail = [
+        `REST review comments: ${result.restReviewCommentCount}`,
+        `threaded review comments: ${result.threadedReviewCommentCount}`,
+        `missingFromThreads: ${result.missingFromThreads.length}`,
+        `missingFromRest: ${result.missingFromRest.length}`,
+        ...result.totalCountMatches === false ? [
+          `reviewThreads totalCount ${result.reviewThreadsTotalCount} != collected ${result.collectedReviewThreads}`
+        ] : []
+      ].join(", ");
+      signals.warnings.push(
+        `[consistency] cross-source reconciliation failed after ${retries} retries (${detail})`
+      );
+    }
   }
   return {
     data: {
@@ -5349,7 +5459,7 @@ function resolvePRIdentifier(pr, repoOption) {
   return parsePRUrl(prUrl);
 }
 var program2 = new Command();
-program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.4").enablePositionalOptions();
+program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.5").enablePositionalOptions();
 program2.argument("[pr]", "PR number or URL (defaults to current branch)").option("-o, --output <dir>", "Output directory", "/tmp/github.com").option(
   "-R, --repo <repo>",
   "Repository in OWNER/REPO format (auto-detected from cwd)"
@@ -5416,11 +5526,11 @@ program2.command("view [pr] [entry-id]").description("Display synced PR review d
   "-R, --repo <repo>",
   "Repository in OWNER/REPO format (auto-detected from cwd)"
 ).option("-s, --status <status>", "Filter by action status (pending, fix, skip, done)").option("-t, --type <type>", "Filter by entry type (thread, review, issue_comment)").option("-a, --author <login>", "Filter by author login").option("--resolved", "Show only resolved threads").option("--unresolved", "Show only unresolved threads").action(
-  (pr, entryId, options) => {
+  async (pr, entryId, options) => {
     const spinner = createSpinner();
     try {
       const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
-      syncCore(owner, repo, prNumber, options.output, (msg) => spinner.update(msg));
+      await syncCore(owner, repo, prNumber, options.output, (msg) => spinner.update(msg));
       spinner.stop();
       viewCommand(owner, repo, prNumber, entryId, options);
     } catch (error) {
@@ -5431,12 +5541,15 @@ program2.command("view [pr] [entry-id]").description("Display synced PR review d
     }
   }
 );
-function syncCore(owner, repo, prNumber, outputBase, log = () => {
+async function syncCore(owner, repo, prNumber, outputBase, log = () => {
 }) {
   log(`Syncing PR #${prNumber} from ${owner}/${repo}...`);
   const outputDir = path2.join(outputBase, owner, repo, "pr", prNumber.toString());
   fs2.mkdirSync(outputDir, { recursive: true });
-  const { data, signals } = collectDataWithSignals({ owner, repo, prNumber }, log);
+  const { data, signals } = await collectDataWithSignals(
+    { owner, repo, prNumber },
+    log
+  );
   log("Writing files...");
   const metaPath = path2.join(outputDir, "pr-meta.json");
   fs2.writeFileSync(metaPath, JSON.stringify(data.meta, null, 2));
@@ -5453,7 +5566,7 @@ async function syncCommand(pr, options) {
   const { owner, repo, prNumber } = resolvePRIdentifier(pr, options.repo);
   const log = options.quiet ? () => {
   } : console.error;
-  const { outputDir, stats, manifest } = syncCore(
+  const { outputDir, stats, manifest } = await syncCore(
     owner,
     repo,
     prNumber,
@@ -5464,6 +5577,12 @@ async function syncCommand(pr, options) {
     console.error("");
     console.error(formatSummary(stats));
     console.error(`Completeness: ${manifest.completenessState}`);
+    if (manifest.warnings.length > 0) {
+      console.error("Warnings:");
+      for (const warning of manifest.warnings) {
+        console.error(`  - ${warning}`);
+      }
+    }
     console.error("");
   }
   if (options.json) {
@@ -5481,6 +5600,7 @@ async function syncCommand(pr, options) {
         threadsUnresolved: stats.threadsUnresolved,
         reviewsFiltered: stats.reviewsFiltered,
         reviewComments: stats.reviewComments,
+        restReviewComments: stats.restReviewComments,
         threadRoots: stats.threadRoots,
         threadReplies: stats.threadReplies,
         totalEntries: stats.totalEntries,
@@ -5488,6 +5608,7 @@ async function syncCommand(pr, options) {
         warnings: stats.warnings,
         completenessState: manifest.completenessState,
         fallbackUsed: manifest.fallbackUsed,
+        consistency: manifest.consistency,
         manifestWarnings: manifest.warnings,
         manifestErrors: manifest.errors
       })

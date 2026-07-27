@@ -22,6 +22,7 @@ export interface PRStats {
 
   // Review comments breakdown
   reviewComments: number;
+  restReviewComments: number;
   threadRoots: number;
   threadReplies: number;
 
@@ -45,6 +46,7 @@ const uniqueMessages = (messages: string[]): string[] => {
 
 const deriveCompletenessState = (
   sources: CollectionManifest["sources"],
+  consistency: CollectionSignals["consistency"],
   warnings: string[],
   errors: string[],
 ): CompletenessState => {
@@ -60,6 +62,14 @@ const deriveCompletenessState = (
 
   if (sourceList.some((source) => source.state === "incomplete")) {
     return "incomplete";
+  }
+
+  // "complete" is a verified claim, not the absence of transport errors:
+  // it additionally requires the cross-source reconciliation to have run
+  // and to have found the REST and GraphQL views of the review comments
+  // in agreement.
+  if (!consistency.checked || consistency.result?.consistent !== true) {
+    return "inconclusive";
   }
 
   if (warnings.length > 0 || errors.length > 0) {
@@ -92,12 +102,14 @@ export function computeStats(
     (r) => !(r.state === "COMMENTED" && !r.body?.trim()),
   ).length;
 
-  // Review comments breakdown
-  // Count total comments from threads (not from REST API which may be incomplete)
+  // Review comments breakdown. Both counts are kept because neither
+  // transport alone is authoritative: their agreement is what the
+  // cross-source reconciliation verifies.
   const reviewComments = data.threads.reduce(
     (sum, t) => sum + t.comments.length,
     0,
   );
+  const restReviewComments = data.reviewComments.length;
   const threadRoots = reviewThreads;
   const threadReplies = reviewComments - threadRoots;
 
@@ -128,6 +140,7 @@ export function computeStats(
     threadsUnresolved,
     reviewsFiltered,
     reviewComments,
+    restReviewComments,
     threadRoots,
     threadReplies,
     totalEntries,
@@ -149,7 +162,7 @@ export function formatSummary(stats: PRStats): string {
   lines.push("");
   lines.push(`Reviews (filtered): ${stats.reviewsFiltered}`);
   lines.push(
-    `Review Comments: ${stats.reviewComments} (thread roots: ${stats.threadRoots}, replies: ${stats.threadReplies})`,
+    `Review Comments: ${stats.reviewComments} threaded / ${stats.restReviewComments} REST (thread roots: ${stats.threadRoots}, replies: ${stats.threadReplies})`,
   );
   lines.push("");
   lines.push(
@@ -212,17 +225,50 @@ export function computeCollectionManifest(
     ...toSourceMessages("reviewComments", sources.reviewComments.errors),
   ]);
 
+  const consistencyResult = signals.consistency.result;
+  const consistency: CollectionManifest["consistency"] = {
+    checked: signals.consistency.checked,
+    consistent: consistencyResult ? consistencyResult.consistent : null,
+    retries: signals.consistency.retries,
+    restReviewComments: consistencyResult
+      ? consistencyResult.restReviewCommentCount
+      : null,
+    threadedReviewComments: consistencyResult
+      ? consistencyResult.threadedReviewCommentCount
+      : null,
+    missingFromThreads: consistencyResult
+      ? consistencyResult.missingFromThreads
+      : [],
+    missingFromRest: consistencyResult ? consistencyResult.missingFromRest : [],
+    reviewThreadsTotalCount: consistencyResult
+      ? consistencyResult.reviewThreadsTotalCount
+      : null,
+    collectedReviewThreads: consistencyResult
+      ? consistencyResult.collectedReviewThreads
+      : null,
+    totalCountMatches: consistencyResult
+      ? consistencyResult.totalCountMatches
+      : null,
+  };
+
   return {
-    completenessState: deriveCompletenessState(sources, warnings, errors),
+    completenessState: deriveCompletenessState(
+      sources,
+      signals.consistency,
+      warnings,
+      errors,
+    ),
     fallbackUsed: signals.fallbackUsed,
     counts: {
       issueComments: data.issueComments.length,
       reviewsRaw: data.reviews.length,
       reviewThreads: data.threads.length,
       reviewComments: data.reviewComments.length,
+      threadedReviewComments: stats.reviewComments,
       totalEntries: entries.length,
       pendingEntries: stats.pendingEntries,
     },
+    consistency,
     sources,
     warnings,
     errors,
