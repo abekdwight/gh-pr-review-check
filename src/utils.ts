@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+
 /**
  * Parse a GitHub PR URL to extract owner, repo, and PR number
  *
@@ -32,8 +34,7 @@ export function parsePRUrl(url: string): { owner: string; repo: string; prNumber
  */
 export function detectRepo(): { owner: string; repo: string } | null {
   try {
-    const { execSync } = require('node:child_process');
-    const remote = execSync('git remote get-url origin', { encoding: 'utf-8' }).trim();
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf-8' }).trim();
 
     // Parse git URL
     // git@github.com:owner/repo.git

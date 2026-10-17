@@ -1,5 +1,13 @@
 // GitHub API types
 
+// One reaction content on a comment (GraphQL ReactionGroup). `viewerHasReacted`
+// tells whether the authenticated account (the viewer) left that reaction.
+export interface ReactionGroup {
+  // GraphQL ReactionContent enum name (THUMBS_UP, THUMBS_DOWN, EYES, ...)
+  content: string;
+  viewerHasReacted: boolean;
+}
+
 export interface ReviewThread {
   id: string;
   isResolved: boolean;
@@ -13,7 +21,9 @@ export interface ReviewThreadComment {
   body: string;
   author: { login: string } | null;
   createdAt: string;
-  reactions?: { nodes: Array<{ content: string }> };
+  // Commit the comment currently applies to (REST commit_id)
+  commit?: { oid: string } | null;
+  reactionGroups?: ReactionGroup[] | null;
   pullRequestReview?: { state: string } | null;
 }
 
@@ -30,6 +40,7 @@ export interface Review {
   body: string;
   commit: { oid: string } | null;
   submittedAt: string | null;
+  reactionGroups?: ReactionGroup[] | null;
 }
 
 export interface IssueComment {
@@ -38,7 +49,7 @@ export interface IssueComment {
   author: { login: string } | null;
   body: string;
   createdAt: string;
-  reactions?: { nodes: Array<{ content: string }> };
+  reactionGroups?: ReactionGroup[] | null;
 }
 
 export interface ReviewComment {

@@ -141,12 +141,37 @@ A JSON array of review entry objects:
 }
 ```
 
+`commit` of a thread is the commit that its first comment currently applies to:
+the PR's latest commit while the commented line is unchanged, an earlier commit
+once the comment is outdated. `commit` of a review is the commit the review was
+submitted on. Either is `null` when GitHub no longer has the commit.
+
 ### Action Status
 
 - `pending` - Not yet processed
 - `fix` - Will be fixed
 - `skip` - Will be skipped
 - `done` - Completed (automatically set for resolved threads)
+
+The action of a thread, an issue comment or a review is decided by the
+reactions that the authenticated GitHub account (the viewer, i.e. the account
+`gh` runs as) left on it. For a thread the reactions on its first comment are
+used. Reactions left by other users, bots included, never change an action.
+
+| Viewer's reaction           | Action |
+| --------------------------- | ------ |
+| 👍 (`+1`), 🎉 (`hooray`)    | `done` |
+| 👎 (`-1`)                   | `skip` |
+| 👀 (`eyes`), 🚀 (`rocket`)  | `fix`  |
+
+When the viewer left several of these, the first row that matches wins (`done`,
+then `skip`, then `fix`). A resolved thread is always `done`. A thread or an
+issue comment without any of these reactions is `pending`. A review without any
+of these reactions is `done` when every thread of the review is `done`, and
+`pending` otherwise.
+
+`gh pr-review-check resolve` accepts threads and issue comments and leaves 👍,
+👎 and 👀 as the viewer. A review is marked by reacting to the review itself.
 
 ## Development
 

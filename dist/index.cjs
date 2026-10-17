@@ -3470,7 +3470,6 @@ var {
 } = import_index.default;
 
 // src/index.ts
-var import_node_child_process3 = require("node:child_process");
 var fs2 = __toESM(require("node:fs"), 1);
 var path2 = __toESM(require("node:path"), 1);
 
@@ -3489,8 +3488,55 @@ function parsePRUrl(url) {
   };
 }
 
-// src/fetcher.ts
+// src/gh.ts
 var import_node_child_process = require("node:child_process");
+var MAX_BUFFER_BYTES = 100 * 1024 * 1024;
+function runGh(args) {
+  try {
+    return (0, import_node_child_process.execFileSync)("gh", args, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      maxBuffer: MAX_BUFFER_BYTES
+    });
+  } catch (error) {
+    const err = error;
+    throw new Error(`gh command failed: ${err.stderr || err.message}`);
+  }
+}
+function buildGraphQLArgs(query, variables = {}) {
+  const args = ["api", "graphql", "-f", `query=${query}`];
+  for (const [key, value] of Object.entries(variables)) {
+    if (value === void 0) {
+      continue;
+    }
+    args.push(typeof value === "number" ? "-F" : "-f", `${key}=${value}`);
+  }
+  return args;
+}
+function runGhGraphQL(query, variables = {}) {
+  return runGh(buildGraphQLArgs(query, variables));
+}
+function detectRepo() {
+  try {
+    const result = runGh([
+      "repo",
+      "view",
+      "--json",
+      "owner,name",
+      "-q",
+      '.owner.login+"/"+.name'
+    ]).trim();
+    const [owner, repo] = result.split("/");
+    return { owner, repo };
+  } catch {
+    return null;
+  }
+}
+function currentBranchPullRequestUrl() {
+  return runGh(["pr", "view", "--json", "url", "-q", ".url"]).trim();
+}
+
+// src/fetcher.ts
 var createGraphQLCollectionError = (kind, message) => {
   const error = new Error(`[${kind}] ${message}`);
   error.name = kind;
@@ -3534,31 +3580,8 @@ var getNextCursorOrNull = (pageInfo, context) => {
   }
   return pageInfo.endCursor;
 };
-function runGh(args) {
-  try {
-    return (0, import_node_child_process.execSync)(`gh ${args}`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      maxBuffer: 100 * 1024 * 1024
-    });
-  } catch (error) {
-    const err = error;
-    throw new Error(`gh command failed: ${err.stderr || err.message}`);
-  }
-}
-function runGhApiGraphQL(query, variables) {
-  const varArgs = Object.entries(variables).filter(([, value]) => value !== void 0).map(([key, value]) => {
-    if (typeof value === "number") {
-      return `-F ${key}=${value}`;
-    }
-    return `-f ${key}=${value}`;
-  }).join(" ");
-  return runGh(
-    `api graphql -f query='${query}'${varArgs ? ` ${varArgs}` : ""}`
-  );
-}
 function fetchPaginatedRestCollection(endpoint) {
-  const json = runGh(`api --paginate --slurp ${endpoint}`);
+  const json = runGh(["api", "--paginate", "--slurp", endpoint]);
   const parsed = JSON.parse(json);
   if (!Array.isArray(parsed)) {
     throw new Error(`Unexpected paginated REST response shape for ${endpoint}`);
@@ -3566,9 +3589,15 @@ function fetchPaginatedRestCollection(endpoint) {
   return parsed.flatMap((page) => Array.isArray(page) ? page : [page]);
 }
 function fetchPRMeta(config) {
-  const json = runGh(
-    `pr view ${config.prNumber} --repo ${config.owner}/${config.repo} --json number,title,state,headRefName,baseRefName,headRefOid`
-  );
+  const json = runGh([
+    "pr",
+    "view",
+    String(config.prNumber),
+    "--repo",
+    `${config.owner}/${config.repo}`,
+    "--json",
+    "number,title,state,headRefName,baseRefName,headRefOid"
+  ]);
   return JSON.parse(json);
 }
 function fetchReviewThreads(config) {
@@ -3589,11 +3618,11 @@ function fetchReviewThreads(config) {
                   body
                   author { login }
                   createdAt
+                  commit { oid }
                   pullRequestReview { state }
-                  reactions(first: 20) {
-                    nodes {
-                      content
-                    }
+                  reactionGroups {
+                    content
+                    viewerHasReacted
                   }
                 }
                 pageInfo {
@@ -3621,11 +3650,11 @@ function fetchReviewThreads(config) {
               body
               author { login }
               createdAt
+              commit { oid }
               pullRequestReview { state }
-              reactions(first: 20) {
-                nodes {
-                  content
-                }
+              reactionGroups {
+                content
+                viewerHasReacted
               }
             }
             pageInfo {
@@ -3641,7 +3670,7 @@ function fetchReviewThreads(config) {
   let totalCount = null;
   let threadsAfter;
   while (true) {
-    const result = runGhApiGraphQL(reviewThreadsQuery, {
+    const result = runGhGraphQL(reviewThreadsQuery, {
       owner: config.owner,
       repo: config.repo,
       number: config.prNumber,
@@ -3677,7 +3706,7 @@ function fetchReviewThreads(config) {
         `thread ${thread.id} comments`
       );
       while (commentsAfter !== null) {
-        const commentsResult = runGhApiGraphQL(threadCommentsQuery, {
+        const commentsResult = runGhGraphQL(threadCommentsQuery, {
           threadId: thread.id,
           commentsAfter
         });
@@ -3720,9 +3749,70 @@ function fetchReviewThreads(config) {
   }
   return { threads: allThreads, totalCount };
 }
+function fetchReactionGroupsByNodeId(config, connection, context) {
+  const reactionNodesQuery = `
+    query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          ${connection}(first: 100, after: $after) {
+            nodes {
+              id
+              reactionGroups {
+                content
+                viewerHasReacted
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+  `;
+  const reactionGroupsByNodeId = /* @__PURE__ */ new Map();
+  let after;
+  while (true) {
+    const result = runGhGraphQL(reactionNodesQuery, {
+      owner: config.owner,
+      repo: config.repo,
+      number: config.prNumber,
+      after
+    });
+    const data = parseGraphQLResponse(
+      result,
+      context
+    );
+    const nodesConnection = data.repository?.pullRequest?.[connection];
+    if (!nodesConnection || !Array.isArray(nodesConnection.nodes)) {
+      throw createGraphQLCollectionError(
+        "GRAPHQL_INVALID_SHAPE",
+        `${context} response did not include nodes`
+      );
+    }
+    for (const node of nodesConnection.nodes) {
+      reactionGroupsByNodeId.set(node.id, node.reactionGroups ?? []);
+    }
+    const nextCursor = getNextCursorOrNull(
+      requirePageInfo(nodesConnection.pageInfo, context),
+      context
+    );
+    if (nextCursor === null) {
+      break;
+    }
+    after = nextCursor;
+  }
+  return reactionGroupsByNodeId;
+}
 function fetchReviews(config) {
   const reviews = fetchPaginatedRestCollection(
     `repos/${config.owner}/${config.repo}/pulls/${config.prNumber}/reviews`
+  );
+  const reactionGroupsByReviewId = fetchReactionGroupsByNodeId(
+    config,
+    "reviews",
+    "reviews reactions"
   );
   return reviews.map((r) => ({
     id: r.node_id,
@@ -3731,30 +3821,27 @@ function fetchReviews(config) {
     state: r.state,
     body: r.body || "",
     commit: r.commit_id ? { oid: r.commit_id } : null,
-    submittedAt: r.submitted_at
+    submittedAt: r.submitted_at,
+    reactionGroups: reactionGroupsByReviewId.get(r.node_id) ?? []
   }));
 }
 function fetchIssueComments(config) {
   const comments = fetchPaginatedRestCollection(
     `repos/${config.owner}/${config.repo}/issues/${config.prNumber}/comments`
   );
-  return comments.map((comment) => {
-    const reactions = comment.reactions ?? {};
-    return {
-      id: comment.node_id,
-      node_id: comment.node_id,
-      author: comment.user ? { login: comment.user.login } : null,
-      body: comment.body,
-      createdAt: comment.created_at,
-      reactions: {
-        nodes: [
-          ...(reactions["+1"] ?? 0) > 0 ? [{ content: "+1" }] : [],
-          ...(reactions["-1"] ?? 0) > 0 ? [{ content: "-1" }] : [],
-          ...(reactions.eyes ?? 0) > 0 ? [{ content: "eyes" }] : []
-        ]
-      }
-    };
-  });
+  const reactionGroupsByCommentId = fetchReactionGroupsByNodeId(
+    config,
+    "comments",
+    "issueComments reactions"
+  );
+  return comments.map((comment) => ({
+    id: comment.node_id,
+    node_id: comment.node_id,
+    author: comment.user ? { login: comment.user.login } : null,
+    body: comment.body,
+    createdAt: comment.created_at,
+    reactionGroups: reactionGroupsByCommentId.get(comment.node_id) ?? []
+  }));
 }
 function fetchReviewComments(config) {
   return fetchPaginatedRestCollection(
@@ -3762,23 +3849,38 @@ function fetchReviewComments(config) {
   );
 }
 
-// src/transformer.ts
-var REACTION_TO_ACTION = {
-  "+1": "done",
-  "-1": "skip",
-  "eyes": "fix",
-  "hooray": "done",
-  "rocket": "fix"
-};
-function getActionFromReactions(reactions) {
-  if (!reactions?.nodes?.length) return null;
-  for (const reaction of reactions.nodes) {
-    const content = reaction.content.toLowerCase();
-    const action = REACTION_TO_ACTION[content];
-    if (action) return action;
+// src/reactions.ts
+var GRAPHQL_TO_REST_CONTENT = /* @__PURE__ */ new Map([
+  ["THUMBS_UP", "+1"],
+  ["THUMBS_DOWN", "-1"],
+  ["LAUGH", "laugh"],
+  ["HOORAY", "hooray"],
+  ["CONFUSED", "confused"],
+  ["HEART", "heart"],
+  ["ROCKET", "rocket"],
+  ["EYES", "eyes"]
+]);
+function normalizeReactionContent(content) {
+  return GRAPHQL_TO_REST_CONTENT.get(content) ?? content.toLowerCase();
+}
+var REACTIONS_BY_ACTION = [
+  { action: "done", reactions: ["+1", "hooray"] },
+  { action: "skip", reactions: ["-1"] },
+  { action: "fix", reactions: ["eyes", "rocket"] }
+];
+function getActionFromViewerReactions(reactionGroups) {
+  const viewerReactions = new Set(
+    (reactionGroups ?? []).filter((group) => group.viewerHasReacted).map((group) => normalizeReactionContent(group.content))
+  );
+  for (const { action, reactions } of REACTIONS_BY_ACTION) {
+    if (reactions.some((reaction) => viewerReactions.has(reaction))) {
+      return action;
+    }
   }
   return null;
 }
+
+// src/transformer.ts
 function buildCommentToThreadMap(threads) {
   const map = /* @__PURE__ */ new Map();
   for (const thread of threads) {
@@ -3787,10 +3889,6 @@ function buildCommentToThreadMap(threads) {
     }
   }
   return map;
-}
-function getCommitForReviewComment(commentId, reviewComments) {
-  const comment = reviewComments.find((c) => c.id === commentId);
-  return comment?.commit_id || null;
 }
 function buildReviewToThreadsMap(data) {
   const commentToThreadId = /* @__PURE__ */ new Map();
@@ -3834,7 +3932,7 @@ function transform(data) {
       action = "done";
     } else if (thread.comments.length > 0) {
       const firstComment = thread.comments[0];
-      const reactionAction = getActionFromReactions(firstComment.reactions);
+      const reactionAction = getActionFromViewerReactions(firstComment.reactionGroups);
       if (reactionAction) {
         action = reactionAction;
       }
@@ -3844,8 +3942,7 @@ function transform(data) {
     const entry = {
       id: thread.id,
       type: "thread",
-      commit: null,
-      // Will be filled from first comment's review comment
+      commit: thread.comments[0]?.commit?.oid ?? null,
       path: thread.path,
       line: thread.line,
       is_resolved: thread.isResolved,
@@ -3858,13 +3955,6 @@ function transform(data) {
         created_at: c.createdAt
       }))
     };
-    if (thread.comments.length > 0) {
-      const firstCommentId = thread.comments[0].id;
-      const numericId = firstCommentId.includes("_") ? void 0 : parseInt(firstCommentId, 10);
-      if (numericId) {
-        entry.commit = getCommitForReviewComment(numericId, data.reviewComments);
-      }
-    }
     entries.push(entry);
   }
   for (const review of data.reviews) {
@@ -3872,7 +3962,10 @@ function transform(data) {
       continue;
     }
     let action = "pending";
-    if (review.databaseId != null) {
+    const reactionAction = getActionFromViewerReactions(review.reactionGroups);
+    if (reactionAction) {
+      action = reactionAction;
+    } else if (review.databaseId != null) {
       const associatedThreadIds = reviewToThreads.get(review.databaseId);
       if (associatedThreadIds && associatedThreadIds.size > 0) {
         const allDone = [...associatedThreadIds].every(
@@ -3896,7 +3989,7 @@ function transform(data) {
   }
   for (const comment of data.issueComments) {
     let action = "pending";
-    const reactionAction = getActionFromReactions(comment.reactions);
+    const reactionAction = getActionFromViewerReactions(comment.reactionGroups);
     if (reactionAction) {
       action = reactionAction;
     }
@@ -4121,20 +4214,11 @@ function reconcile(data, reviewThreadsTotalCount) {
 }
 
 // src/resolve.ts
-var import_node_child_process2 = require("node:child_process");
 var STATUS_REACTIONS = {
   done: "+1",
   skip: "-1",
   in_progress: "eyes"
 };
-function runGh2(args) {
-  try {
-    return (0, import_node_child_process2.execSync)(`gh ${args}`, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
-  } catch (error) {
-    const err = error;
-    throw new Error(`gh command failed: ${err.stderr || err.message}`);
-  }
-}
 function detectEntryType(entryId) {
   if (entryId.startsWith("PRRT_")) return "thread";
   if (entryId.startsWith("PRR_")) return "review";
@@ -4152,13 +4236,20 @@ function addReactionToIssueComment(owner, repo, commentNodeId, reaction) {
       }
     }
   `;
-  const result = runGh2(`api graphql -f query='${query}' -f nodeId=${commentNodeId}`);
+  const result = runGhGraphQL(query, { nodeId: commentNodeId });
   const data = JSON.parse(result);
   const databaseId = data.data?.node?.databaseId;
   if (!databaseId) {
     throw new Error(`Could not find issue comment with node_id: ${commentNodeId}`);
   }
-  runGh2(`api --method POST repos/${owner}/${repo}/issues/comments/${databaseId}/reactions -f content=${reaction}`);
+  runGh([
+    "api",
+    "--method",
+    "POST",
+    `repos/${owner}/${repo}/issues/comments/${databaseId}/reactions`,
+    "-f",
+    `content=${reaction}`
+  ]);
 }
 function addReactionToThread(owner, repo, threadId, reaction) {
   const query = `
@@ -4174,14 +4265,21 @@ function addReactionToThread(owner, repo, threadId, reaction) {
       }
     }
   `;
-  const result = runGh2(`api graphql -f query='${query}' -f threadId=${threadId}`);
+  const result = runGhGraphQL(query, { threadId });
   const data = JSON.parse(result);
   const firstComment = data.data?.node?.comments?.nodes?.[0];
   if (!firstComment || !firstComment.databaseId) {
     throw new Error(`Could not find comments in thread: ${threadId}`);
   }
   const databaseId = firstComment.databaseId;
-  runGh2(`api --method POST repos/${owner}/${repo}/pulls/comments/${databaseId}/reactions -f content=${reaction}`);
+  runGh([
+    "api",
+    "--method",
+    "POST",
+    `repos/${owner}/${repo}/pulls/comments/${databaseId}/reactions`,
+    "-f",
+    `content=${reaction}`
+  ]);
 }
 function replyToThread(owner, repo, threadId, body) {
   const replyMutation = `
@@ -4193,7 +4291,7 @@ function replyToThread(owner, repo, threadId, body) {
       }
     }
   `;
-  runGh2(`api graphql -f query='${replyMutation}' -f threadId=${threadId} -f body="${body.replace(/"/g, '\\"')}"`);
+  runGhGraphQL(replyMutation, { threadId, body });
 }
 function replyToIssueComment(owner, repo, commentNodeId, body) {
   const query = `
@@ -4207,13 +4305,13 @@ function replyToIssueComment(owner, repo, commentNodeId, body) {
       }
     }
   `;
-  const result = runGh2(`api graphql -f query='${query}' -f nodeId=${commentNodeId}`);
+  const result = runGhGraphQL(query, { nodeId: commentNodeId });
   const data = JSON.parse(result);
   const issueNumber = data.data?.node?.issue?.number;
   if (!issueNumber) {
     throw new Error(`Could not find issue for comment: ${commentNodeId}`);
   }
-  runGh2(`pr comment ${issueNumber} --repo ${owner}/${repo} --body "${body.replace(/"/g, '\\"')}"`);
+  runGh(["pr", "comment", String(issueNumber), "--repo", `${owner}/${repo}`, "--body", body]);
 }
 function resolve(options) {
   const { owner, repo, entryId, status, comment } = options;
@@ -5411,21 +5509,6 @@ var collectDataWithSignals = async (config, log) => {
     signals
   };
 };
-function detectRepo() {
-  try {
-    const result = (0, import_node_child_process3.execSync)(
-      'gh repo view --json owner,name -q ".owner.login+\\"/\\"+.name"',
-      {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"]
-      }
-    ).trim();
-    const [owner, repo] = result.split("/");
-    return { owner, repo };
-  } catch {
-    return null;
-  }
-}
 function resolvePRIdentifier(pr, repoOption) {
   if (pr) {
     if (pr.startsWith("http") || pr.includes("github.com")) {
@@ -5452,14 +5535,10 @@ function resolvePRIdentifier(pr, repoOption) {
     }
     return { owner, repo, prNumber: parseInt(pr, 10) };
   }
-  const prUrl = (0, import_node_child_process3.execSync)("gh pr view --json url -q .url", {
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"]
-  }).trim();
-  return parsePRUrl(prUrl);
+  return parsePRUrl(currentBranchPullRequestUrl());
 }
 var program2 = new Command();
-program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.5").enablePositionalOptions();
+program2.name("gh-pr-review-check").description("Sync PR review data for AI-assisted review handling").version("0.0.6").enablePositionalOptions();
 program2.argument("[pr]", "PR number or URL (defaults to current branch)").option("-o, --output <dir>", "Output directory", "/tmp/github.com").option(
   "-R, --repo <repo>",
   "Repository in OWNER/REPO format (auto-detected from cwd)"

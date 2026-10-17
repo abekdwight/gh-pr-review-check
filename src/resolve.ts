@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { runGh, runGhGraphQL } from './gh.js';
 
 export type Status = 'done' | 'skip' | 'in_progress';
 
@@ -14,15 +14,6 @@ export interface ResolveOptions {
   entryId: string;
   status: Status;
   comment?: string;
-}
-
-function runGh(args: string): string {
-  try {
-    return execSync(`gh ${args}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
-  } catch (error) {
-    const err = error as { stderr?: string; message: string };
-    throw new Error(`gh command failed: ${err.stderr || err.message}`);
-  }
 }
 
 /**
@@ -53,7 +44,7 @@ function addReactionToIssueComment(owner: string, repo: string, commentNodeId: s
     }
   `;
 
-  const result = runGh(`api graphql -f query='${query}' -f nodeId=${commentNodeId}`);
+  const result = runGhGraphQL(query, { nodeId: commentNodeId });
   const data = JSON.parse(result);
   const databaseId = data.data?.node?.databaseId;
 
@@ -62,7 +53,14 @@ function addReactionToIssueComment(owner: string, repo: string, commentNodeId: s
   }
 
   // Add reaction using REST API
-  runGh(`api --method POST repos/${owner}/${repo}/issues/comments/${databaseId}/reactions -f content=${reaction}`);
+  runGh([
+    'api',
+    '--method',
+    'POST',
+    `repos/${owner}/${repo}/issues/comments/${databaseId}/reactions`,
+    '-f',
+    `content=${reaction}`,
+  ]);
 }
 
 /**
@@ -84,7 +82,7 @@ function addReactionToThread(owner: string, repo: string, threadId: string, reac
     }
   `;
 
-  const result = runGh(`api graphql -f query='${query}' -f threadId=${threadId}`);
+  const result = runGhGraphQL(query, { threadId });
   const data = JSON.parse(result);
   const firstComment = data.data?.node?.comments?.nodes?.[0];
 
@@ -95,7 +93,14 @@ function addReactionToThread(owner: string, repo: string, threadId: string, reac
   const databaseId = firstComment.databaseId;
 
   // Add reaction to the review comment using pulls/comments endpoint
-  runGh(`api --method POST repos/${owner}/${repo}/pulls/comments/${databaseId}/reactions -f content=${reaction}`);
+  runGh([
+    'api',
+    '--method',
+    'POST',
+    `repos/${owner}/${repo}/pulls/comments/${databaseId}/reactions`,
+    '-f',
+    `content=${reaction}`,
+  ]);
 }
 
 /**
@@ -113,7 +118,7 @@ function replyToThread(owner: string, repo: string, threadId: string, body: stri
     }
   `;
 
-  runGh(`api graphql -f query='${replyMutation}' -f threadId=${threadId} -f body="${body.replace(/"/g, '\\"')}"`);
+  runGhGraphQL(replyMutation, { threadId, body });
 }
 
 /**
@@ -133,7 +138,7 @@ function replyToIssueComment(owner: string, repo: string, commentNodeId: string,
     }
   `;
 
-  const result = runGh(`api graphql -f query='${query}' -f nodeId=${commentNodeId}`);
+  const result = runGhGraphQL(query, { nodeId: commentNodeId });
   const data = JSON.parse(result);
   const issueNumber = data.data?.node?.issue?.number;
 
@@ -142,7 +147,7 @@ function replyToIssueComment(owner: string, repo: string, commentNodeId: string,
   }
 
   // Use gh pr comment to add a comment
-  runGh(`pr comment ${issueNumber} --repo ${owner}/${repo} --body "${body.replace(/"/g, '\\"')}"`);
+  runGh(['pr', 'comment', String(issueNumber), '--repo', `${owner}/${repo}`, '--body', body]);
 }
 
 /**
