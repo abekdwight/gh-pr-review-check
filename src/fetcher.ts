@@ -1,5 +1,6 @@
-import { execSync } from "node:child_process";
+import { runGh, runGhGraphQL } from "./gh.js";
 import type {
+  ReactionGroup,
   ReviewThread,
   ReviewThreadsResult,
   Review,
@@ -10,18 +11,11 @@ import type {
   FetchedData,
 } from "./types.js";
 
-type RestIssueCommentReactions = {
-  "+1"?: number;
-  "-1"?: number;
-  eyes?: number;
-};
-
 type RestIssueComment = {
   node_id: string;
   user: { login: string } | null;
   body: string;
   created_at: string;
-  reactions?: RestIssueCommentReactions;
 };
 
 type GraphQLErrorEntry = {
@@ -43,7 +37,8 @@ type GraphQLThreadComment = {
   body: string;
   author: { login: string } | null;
   createdAt: string;
-  reactions?: { nodes: Array<{ content: string }> };
+  commit?: { oid: string } | null;
+  reactionGroups?: ReactionGroup[] | null;
   pullRequestReview?: { state: string } | null;
 };
 
@@ -78,6 +73,28 @@ type GraphQLThreadCommentsData = {
   node?: {
     comments?: GraphQLThreadCommentsConnection;
   } | null;
+};
+
+// PullRequest connections whose nodes (PR-level comments and reviews) carry the
+// reactions that REST reports only as counts.
+type ReactionNodesConnectionName = "comments" | "reviews";
+
+type GraphQLReactionNode = {
+  id: string;
+  reactionGroups?: ReactionGroup[] | null;
+};
+
+type GraphQLReactionNodesConnection = {
+  nodes: GraphQLReactionNode[];
+  pageInfo: GraphQLPageInfo;
+};
+
+type GraphQLReactionNodesData = {
+  repository?: {
+    pullRequest?: Partial<
+      Record<ReactionNodesConnectionName, GraphQLReactionNodesConnection>
+    > | null;
+  };
 };
 
 type GraphQLCollectionErrorKind =
@@ -154,39 +171,8 @@ const getNextCursorOrNull = (
   return pageInfo.endCursor;
 };
 
-function runGh(args: string): string {
-  try {
-    return execSync(`gh ${args}`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      maxBuffer: 100 * 1024 * 1024,
-    });
-  } catch (error) {
-    const err = error as { stderr?: string; message: string };
-    throw new Error(`gh command failed: ${err.stderr || err.message}`);
-  }
-}
-
-function runGhApiGraphQL(
-  query: string,
-  variables: Record<string, string | number | undefined>,
-): string {
-  const varArgs = Object.entries(variables)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => {
-      if (typeof value === "number") {
-        return `-F ${key}=${value}`;
-      }
-      return `-f ${key}=${value}`;
-    })
-    .join(" ");
-  return runGh(
-    `api graphql -f query='${query}'${varArgs ? ` ${varArgs}` : ""}`,
-  );
-}
-
 function fetchPaginatedRestCollection<T>(endpoint: string): T[] {
-  const json = runGh(`api --paginate --slurp ${endpoint}`);
+  const json = runGh(["api", "--paginate", "--slurp", endpoint]);
   const parsed = JSON.parse(json) as unknown;
 
   if (!Array.isArray(parsed)) {
@@ -197,9 +183,15 @@ function fetchPaginatedRestCollection<T>(endpoint: string): T[] {
 }
 
 export function fetchPRMeta(config: SyncConfig): PRMeta {
-  const json = runGh(
-    `pr view ${config.prNumber} --repo ${config.owner}/${config.repo} --json number,title,state,headRefName,baseRefName,headRefOid`,
-  );
+  const json = runGh([
+    "pr",
+    "view",
+    String(config.prNumber),
+    "--repo",
+    `${config.owner}/${config.repo}`,
+    "--json",
+    "number,title,state,headRefName,baseRefName,headRefOid",
+  ]);
   return JSON.parse(json);
 }
 
@@ -221,11 +213,11 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThreadsResult {
                   body
                   author { login }
                   createdAt
+                  commit { oid }
                   pullRequestReview { state }
-                  reactions(first: 20) {
-                    nodes {
-                      content
-                    }
+                  reactionGroups {
+                    content
+                    viewerHasReacted
                   }
                 }
                 pageInfo {
@@ -254,11 +246,11 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThreadsResult {
               body
               author { login }
               createdAt
+              commit { oid }
               pullRequestReview { state }
-              reactions(first: 20) {
-                nodes {
-                  content
-                }
+              reactionGroups {
+                content
+                viewerHasReacted
               }
             }
             pageInfo {
@@ -276,7 +268,7 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThreadsResult {
   let threadsAfter: string | undefined;
 
   while (true) {
-    const result = runGhApiGraphQL(reviewThreadsQuery, {
+    const result = runGhGraphQL(reviewThreadsQuery, {
       owner: config.owner,
       repo: config.repo,
       number: config.prNumber,
@@ -321,7 +313,7 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThreadsResult {
       );
 
       while (commentsAfter !== null) {
-        const commentsResult = runGhApiGraphQL(threadCommentsQuery, {
+        const commentsResult = runGhGraphQL(threadCommentsQuery, {
           threadId: thread.id,
           commentsAfter,
         });
@@ -373,6 +365,81 @@ export function fetchReviewThreads(config: SyncConfig): ReviewThreadsResult {
   return { threads: allThreads, totalCount };
 }
 
+/**
+ * Reactions of every PR-level comment or review, keyed by node ID. The REST
+ * lists cannot tell who reacted, so the viewer's reactions are read from
+ * GraphQL, one request per 100 nodes.
+ */
+function fetchReactionGroupsByNodeId(
+  config: SyncConfig,
+  connection: ReactionNodesConnectionName,
+  context: string,
+): Map<string, ReactionGroup[]> {
+  const reactionNodesQuery = `
+    query($owner: String!, $repo: String!, $number: Int!, $after: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          ${connection}(first: 100, after: $after) {
+            nodes {
+              id
+              reactionGroups {
+                content
+                viewerHasReacted
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const reactionGroupsByNodeId = new Map<string, ReactionGroup[]>();
+  let after: string | undefined;
+
+  while (true) {
+    const result = runGhGraphQL(reactionNodesQuery, {
+      owner: config.owner,
+      repo: config.repo,
+      number: config.prNumber,
+      after,
+    });
+
+    const data = parseGraphQLResponse<GraphQLReactionNodesData>(
+      result,
+      context,
+    );
+    const nodesConnection = data.repository?.pullRequest?.[connection];
+
+    if (!nodesConnection || !Array.isArray(nodesConnection.nodes)) {
+      throw createGraphQLCollectionError(
+        "GRAPHQL_INVALID_SHAPE",
+        `${context} response did not include nodes`,
+      );
+    }
+
+    for (const node of nodesConnection.nodes) {
+      reactionGroupsByNodeId.set(node.id, node.reactionGroups ?? []);
+    }
+
+    const nextCursor = getNextCursorOrNull(
+      requirePageInfo(nodesConnection.pageInfo, context),
+      context,
+    );
+
+    if (nextCursor === null) {
+      break;
+    }
+
+    after = nextCursor;
+  }
+
+  return reactionGroupsByNodeId;
+}
+
 type RestReview = {
   id: number;
   node_id: string;
@@ -387,6 +454,12 @@ export function fetchReviews(config: SyncConfig): Review[] {
   const reviews = fetchPaginatedRestCollection<RestReview>(
     `repos/${config.owner}/${config.repo}/pulls/${config.prNumber}/reviews`,
   );
+  const reactionGroupsByReviewId = fetchReactionGroupsByNodeId(
+    config,
+    "reviews",
+    "reviews reactions",
+  );
+
   return reviews.map((r) => ({
     id: r.node_id,
     databaseId: r.id,
@@ -395,6 +468,7 @@ export function fetchReviews(config: SyncConfig): Review[] {
     body: r.body || "",
     commit: r.commit_id ? { oid: r.commit_id } : null,
     submittedAt: r.submitted_at,
+    reactionGroups: reactionGroupsByReviewId.get(r.node_id) ?? [],
   }));
 }
 
@@ -402,25 +476,20 @@ export function fetchIssueComments(config: SyncConfig): IssueComment[] {
   const comments = fetchPaginatedRestCollection<RestIssueComment>(
     `repos/${config.owner}/${config.repo}/issues/${config.prNumber}/comments`,
   );
+  const reactionGroupsByCommentId = fetchReactionGroupsByNodeId(
+    config,
+    "comments",
+    "issueComments reactions",
+  );
 
-  return comments.map((comment) => {
-    const reactions = comment.reactions ?? {};
-
-    return {
-      id: comment.node_id,
-      node_id: comment.node_id,
-      author: comment.user ? { login: comment.user.login } : null,
-      body: comment.body,
-      createdAt: comment.created_at,
-      reactions: {
-        nodes: [
-          ...((reactions["+1"] ?? 0) > 0 ? [{ content: "+1" }] : []),
-          ...((reactions["-1"] ?? 0) > 0 ? [{ content: "-1" }] : []),
-          ...((reactions.eyes ?? 0) > 0 ? [{ content: "eyes" }] : []),
-        ],
-      },
-    };
-  });
+  return comments.map((comment) => ({
+    id: comment.node_id,
+    node_id: comment.node_id,
+    author: comment.user ? { login: comment.user.login } : null,
+    body: comment.body,
+    createdAt: comment.created_at,
+    reactionGroups: reactionGroupsByCommentId.get(comment.node_id) ?? [],
+  }));
 }
 
 export function fetchReviewComments(config: SyncConfig): ReviewComment[] {

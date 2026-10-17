@@ -4,34 +4,9 @@ import type {
   ThreadEntry,
   ReviewEntry,
   IssueCommentEntry,
-  ReviewComment,
   ActionStatus,
 } from './types.js';
-
-// Reaction content to action mapping (case-insensitive)
-const REACTION_TO_ACTION: Record<string, ActionStatus> = {
-  '+1': 'done',
-  '-1': 'skip',
-  'eyes': 'fix',
-  'hooray': 'done',
-  'rocket': 'fix',
-};
-
-/**
- * Determine action from reactions
- */
-function getActionFromReactions(reactions?: { nodes: Array<{ content: string }> }): ActionStatus | null {
-  if (!reactions?.nodes?.length) return null;
-
-  // Check for known reactions (case-insensitive)
-  for (const reaction of reactions.nodes) {
-    const content = reaction.content.toLowerCase();
-    const action = REACTION_TO_ACTION[content];
-    if (action) return action;
-  }
-
-  return null;
-}
+import { getActionFromViewerReactions } from './reactions.js';
 
 /**
  * Build a map from review comment ID to thread ID
@@ -46,17 +21,6 @@ function buildCommentToThreadMap(
     }
   }
   return map;
-}
-
-/**
- * Get commit ID for a review comment
- */
-function getCommitForReviewComment(
-  commentId: number,
-  reviewComments: ReviewComment[]
-): string | null {
-  const comment = reviewComments.find((c) => c.id === commentId);
-  return comment?.commit_id || null;
 }
 
 /**
@@ -115,14 +79,14 @@ export function transform(data: FetchedData): OutputEntry[] {
   // 1. Review Threads (primary source for inline comments)
   const threadActions = new Map<string, ActionStatus>();
   for (const thread of data.threads) {
-    // Determine action: isResolved takes priority, then check reactions
+    // Determine action: isResolved takes priority, then the viewer's
+    // reactions on the first comment
     let action: ActionStatus = 'pending';
     if (thread.isResolved) {
       action = 'done';
     } else if (thread.comments.length > 0) {
-      // Check first comment's reactions
       const firstComment = thread.comments[0];
-      const reactionAction = getActionFromReactions(firstComment.reactions);
+      const reactionAction = getActionFromViewerReactions(firstComment.reactionGroups);
       if (reactionAction) {
         action = reactionAction;
       }
@@ -134,7 +98,7 @@ export function transform(data: FetchedData): OutputEntry[] {
     const entry: ThreadEntry = {
       id: thread.id,
       type: 'thread',
-      commit: null, // Will be filled from first comment's review comment
+      commit: thread.comments[0]?.commit?.oid ?? null,
       path: thread.path,
       line: thread.line,
       is_resolved: thread.isResolved,
@@ -148,18 +112,6 @@ export function transform(data: FetchedData): OutputEntry[] {
       })),
     };
 
-    // Try to get commit from review comments
-    if (thread.comments.length > 0) {
-      const firstCommentId = thread.comments[0].id;
-      // Extract numeric ID from PRRC_xxx format
-      const numericId = firstCommentId.includes('_')
-        ? undefined
-        : parseInt(firstCommentId, 10);
-      if (numericId) {
-        entry.commit = getCommitForReviewComment(numericId, data.reviewComments);
-      }
-    }
-
     entries.push(entry);
   }
 
@@ -170,9 +122,13 @@ export function transform(data: FetchedData): OutputEntry[] {
       continue;
     }
 
-    // Derive action from associated threads
+    // Determine action: the viewer's reactions on the review itself, else
+    // done when every associated thread is done
     let action: ActionStatus = 'pending';
-    if (review.databaseId != null) {
+    const reactionAction = getActionFromViewerReactions(review.reactionGroups);
+    if (reactionAction) {
+      action = reactionAction;
+    } else if (review.databaseId != null) {
       const associatedThreadIds = reviewToThreads.get(review.databaseId);
       if (associatedThreadIds && associatedThreadIds.size > 0) {
         const allDone = [...associatedThreadIds].every(
@@ -198,9 +154,9 @@ export function transform(data: FetchedData): OutputEntry[] {
 
   // 3. Issue Comments (PR-level comments)
   for (const comment of data.issueComments) {
-    // Determine action from reactions
+    // Determine action from the viewer's reactions
     let action: ActionStatus = 'pending';
-    const reactionAction = getActionFromReactions(comment.reactions);
+    const reactionAction = getActionFromViewerReactions(comment.reactionGroups);
     if (reactionAction) {
       action = reactionAction;
     }

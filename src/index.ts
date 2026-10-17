@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parsePRUrl } from "./utils.js";
+import { currentBranchPullRequestUrl, detectRepo } from "./gh.js";
 import {
   fetchIssueComments,
   fetchPRMeta,
@@ -260,22 +260,6 @@ const collectDataWithSignals = async (
   };
 };
 
-function detectRepo(): { owner: string; repo: string } | null {
-  try {
-    const result = execSync(
-      'gh repo view --json owner,name -q ".owner.login+\\"/\\"+.name"',
-      {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    ).trim();
-    const [owner, repo] = result.split("/");
-    return { owner, repo };
-  } catch {
-    return null;
-  }
-}
-
 function resolvePRIdentifier(
   pr: string | undefined,
   repoOption?: string,
@@ -307,11 +291,7 @@ function resolvePRIdentifier(
     return { owner, repo, prNumber: parseInt(pr, 10) };
   }
   // Auto-detect from current branch
-  const prUrl = execSync("gh pr view --json url -q .url", {
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-  }).trim();
-  return parsePRUrl(prUrl);
+  return parsePRUrl(currentBranchPullRequestUrl());
 }
 
 const program = new Command();
@@ -319,7 +299,7 @@ const program = new Command();
 program
   .name("gh-pr-review-check")
   .description("Sync PR review data for AI-assisted review handling")
-  .version("0.0.5")
+  .version("0.0.6")
   .enablePositionalOptions();
 
 // Default command: sync
